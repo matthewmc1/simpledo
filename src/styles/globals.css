@@ -1,0 +1,49 @@
+:root {
+  --paper: #f6f3eb;
+  --paper-2: #ebe7dc;
+  --ink: #15140f;
+  --ink-2: #2a2722;
+  --muted: #807d72;
+  --hairline: #d8d2c2;
+  --accent: #a85a2c;
+
+  --serif: "Newsreader", ui-serif, Georgia, serif;
+  --ui: "Geist", ui-sans-serif, system-ui, sans-serif;
+  --mono: "Geist Mono", ui-monospace, "SF Mono", monospace;
+
+  /* density */
+  --row-pad-y: 14px;
+  --section-gap: 28px;
+}
+
+:root[data-density="compact"] {
+  --row-pad-y: 9px;
+  --section-gap: 20px;
+}
+
+html, body, #root {
+  margin: 0;
+  padding: 0;
+  height: 100%;
+  width: 100%;
+}
+
+html, body {
+  background: var(--paper-2);
+  color: var(--ink);
+  font-family: var(--ui);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+button { font-family: inherit; }
+
+* { box-sizing: border-box; }
+
+@keyframes pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.45; }
+}
+
+/* Scoped row padding hook — views opt in via data-row */
+[data-row] { padding-top: var(--row-pad-y); padding-bottom: var(--row-pad-y); }
