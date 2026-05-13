@@ -67,9 +67,10 @@ playwright/.cache/
 drizzle/meta/
 
 # ── Postgres / Docker local data ──────────────────────────────────────────
-data/
-pgdata/
-postgres-data/
+# Anchored to repo root so we don't accidentally ignore src/data/ etc.
+/data/
+/pgdata/
+/postgres-data/
 
 # ── Temp / scratch ─────────────────────────────────────────────────────────
 tmp/
