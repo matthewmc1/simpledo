@@ -5,9 +5,24 @@ import type { Context } from "hono";
 import { auth } from "../auth";
 import { db } from "../db/client";
 import { session as sessionTable, user as userTable } from "../db/schema";
+import { createRateLimiter } from "../middleware/rateLimit";
 import { HTTPError, LOCAL_SESSION_COOKIE, type Env } from "../middleware/session";
 import { seedDemoUser } from "../seed/demo";
 import { EmailSignInSchema } from "../../shared/types";
+
+// Conservative caps — these endpoints both create user rows server-side, so
+// we want to make abuse expensive. A real human hits demo once and email
+// maybe a handful of times per day; these limits leave plenty of headroom.
+const demoLimiter = createRateLimiter({
+  windowMs: 60 * 60 * 1000, // 1h
+  max: 5,
+  label: "demo sign-in",
+});
+const emailLimiter = createRateLimiter({
+  windowMs: 10 * 60 * 1000, // 10m
+  max: 10,
+  label: "email sign-in",
+});
 
 const router = new Hono<Env>();
 
@@ -48,7 +63,7 @@ async function issueLocalSession(c: Context<Env>, userId: string): Promise<void>
  * first. Side-steps Better Auth's signed-cookie format on purpose (see
  * middleware/session.ts for the dual-cookie resolver).
  */
-router.post("/auth/demo", async (c) => {
+router.post("/auth/demo", demoLimiter, async (c) => {
   const id = crypto.randomUUID();
   const tag = id.slice(0, 8);
 
@@ -84,7 +99,7 @@ router.post("/auth/demo", async (c) => {
  * sign in as that user. The seam is intentional so a real email verification
  * step can be added later without changing the call sites.
  */
-router.post("/auth/email", async (c) => {
+router.post("/auth/email", emailLimiter, async (c) => {
   const body = (await c.req.json().catch(() => null)) as unknown;
   const parsed = EmailSignInSchema.safeParse(body);
   if (!parsed.success) throw new HTTPError(400, "Valid email required");

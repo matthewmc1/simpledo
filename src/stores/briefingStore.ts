@@ -30,6 +30,15 @@ function parseSections(text: string): { headline: string; summary: string } {
   return { headline, summary };
 }
 
+/** Distinguishes user-initiated cancellations from real network errors. */
+function isAbortError(e: unknown): boolean {
+  return e instanceof DOMException && e.name === "AbortError";
+}
+
+/** Module-scoped — not in store state because AbortController is not
+ *  serialisable and React doesn't need to re-render when it changes. */
+let inflightController: AbortController | null = null;
+
 export const useBriefingStore = create<BriefingState>((set, get) => ({
   status: "idle",
   error: null,
@@ -37,11 +46,19 @@ export const useBriefingStore = create<BriefingState>((set, get) => ({
   summary: "",
   generation: 0,
 
-  reset: () =>
-    set({ status: "idle", error: null, headline: "", summary: "", generation: 0 }),
+  reset: () => {
+    inflightController?.abort();
+    inflightController = null;
+    set({ status: "idle", error: null, headline: "", summary: "", generation: 0 });
+  },
 
   generate: async () => {
     if (get().status === "streaming") return;
+    // Abort any prior stream — there shouldn't be one (status === idle/ready/error),
+    // but belt-and-braces in case `generate()` is fired again before status flips.
+    inflightController?.abort();
+    const controller = new AbortController();
+    inflightController = controller;
     set({ status: "streaming", error: null, headline: "", summary: "" });
 
     let res: Response;
@@ -49,16 +66,20 @@ export const useBriefingStore = create<BriefingState>((set, get) => ({
       res = await fetch("/api/briefing", {
         method: "POST",
         credentials: "include",
+        signal: controller.signal,
       });
     } catch (e) {
+      if (isAbortError(e)) return; // intentional cancel; leave state alone
       const msg = e instanceof Error ? e.message : String(e);
       set({ status: "error", error: msg });
+      if (inflightController === controller) inflightController = null;
       return;
     }
 
     if (!res.ok || !res.body) {
       const text = await res.text().catch(() => res.statusText);
       set({ status: "error", error: text || `HTTP ${res.status}` });
+      if (inflightController === controller) inflightController = null;
       return;
     }
 
@@ -72,6 +93,7 @@ export const useBriefingStore = create<BriefingState>((set, get) => ({
       while (true) {
         const { value, done } = await reader.read();
         if (done) break;
+        if (controller.signal.aborted) return;
         buffer += decoder.decode(value, { stream: true });
 
         // Ollama emits NDJSON — process complete lines, retain the trailing partial.
@@ -90,11 +112,14 @@ export const useBriefingStore = create<BriefingState>((set, get) => ({
         set({ headline, summary });
       }
     } catch (e) {
+      if (isAbortError(e)) return;
       const msg = e instanceof Error ? e.message : String(e);
       set({ status: "error", error: msg });
+      if (inflightController === controller) inflightController = null;
       return;
     }
 
+    if (controller.signal.aborted) return;
     const { headline, summary } = parseSections(accumulated);
     set({
       status: "ready",
@@ -102,6 +127,7 @@ export const useBriefingStore = create<BriefingState>((set, get) => ({
       summary,
       generation: get().generation + 1,
     });
+    if (inflightController === controller) inflightController = null;
   },
 }));
 

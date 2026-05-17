@@ -1,4 +1,5 @@
 import { Link, useLocation } from "react-router-dom";
+import { useShallow } from "zustand/react/shallow";
 import { useCaptureModal } from "../../stores/captureStore";
 import { useInboxStore } from "../../stores/inboxStore";
 import {
@@ -27,10 +28,25 @@ export function LeftRail({ activeOverride }: Props) {
   const openCapture = useCaptureModal((s) => s.setOpen);
   const openProjectModal = useProjectCreateModal((s) => s.setOpen);
   const projects = useProjectStore((s) => s.projects);
-  const todayCount = useTaskStore((s) => s.tasks.filter((t) => t.status === "today").length);
-  const nextCount = useTaskStore((s) => s.tasks.filter((t) => t.status === "next").length);
-  const waitingCount = useTaskStore((s) => s.tasks.filter((t) => t.status === "waiting").length);
-  const somedayCount = useTaskStore((s) => s.tasks.filter((t) => t.status === "someday").length);
+  // One selector returning a counts object via shallow equality — keeps us
+  // from re-rendering the whole rail every time any task changes. Without
+  // useShallow, the four-way `.filter(...).length` pattern allocated fresh
+  // arrays per call and re-rendered on every mutation.
+  const { todayCount, nextCount, waitingCount, somedayCount } = useTaskStore(
+    useShallow((s) => {
+      let today = 0,
+        next = 0,
+        waiting = 0,
+        someday = 0;
+      for (const t of s.tasks) {
+        if (t.status === "today") today++;
+        else if (t.status === "next") next++;
+        else if (t.status === "waiting") waiting++;
+        else if (t.status === "someday") someday++;
+      }
+      return { todayCount: today, nextCount: next, waitingCount: waiting, somedayCount: someday };
+    }),
+  );
   const inboxCount = useInboxStore((s) => s.items.length);
 
   const LISTS: ListItem[] = [
