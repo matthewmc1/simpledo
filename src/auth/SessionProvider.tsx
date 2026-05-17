@@ -9,6 +9,7 @@ import {
 } from "react";
 import { useBriefingStore } from "../stores/briefingStore";
 import { useCalendarRecommendStore } from "../stores/calendarRecommendStore";
+import { useGoogleCalendarStore } from "../stores/googleCalendarStore";
 import { useInboxStore } from "../stores/inboxStore";
 import { useProjectStore } from "../stores/projectStore";
 import { useReleaseStore } from "../stores/releaseStore";
@@ -47,6 +48,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
     useReviewStore.getState().reset();
     useCalendarRecommendStore.getState().reset();
     useReleaseStore.getState().reset();
+    useGoogleCalendarStore.getState().reset();
     setState({ status: "anonymous", user: null });
   }, []);
 

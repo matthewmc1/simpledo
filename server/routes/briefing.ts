@@ -138,7 +138,9 @@ router.post("/briefing", async (c) => {
 interface ReviewTask {
   title: string;
   priority: string;
+  status?: string;
   projectName: string | null;
+  createdAt: Date;
   updatedAt: Date;
 }
 
@@ -146,7 +148,17 @@ interface ReviewProject {
   name: string;
   doneCount: number;
   openCount: number;
-  staleDays: number | null;
+  /** Days since the most-recently-updated task in this project. Project-level
+   *  signal — individual tasks have their own ages on their own lines. */
+  daysSinceLastTaskUpdate: number | null;
+}
+
+/** Renders "today" or "Nd old" from a Date, for prompt clarity. */
+function ageLabel(d: Date): string {
+  const days = Math.floor((Date.now() - d.getTime()) / DAY_MS);
+  if (days <= 0) return "today";
+  if (days === 1) return "1d old";
+  return `${days}d old`;
 }
 
 function buildReviewPrompt(
@@ -161,7 +173,7 @@ function buildReviewPrompt(
           (t, i) =>
             `${i + 1}. ${t.title}` +
             (t.projectName ? ` (${t.projectName})` : "") +
-            ` — [${t.priority}]`,
+            ` — [${t.priority}], completed ${ageLabel(t.updatedAt)}`,
         )
         .join("\n")
     : "(nothing completed this week)";
@@ -172,7 +184,7 @@ function buildReviewPrompt(
           (t, i) =>
             `${i + 1}. ${t.title}` +
             (t.projectName ? ` (${t.projectName})` : "") +
-            ` — last touched ${Math.round((Date.now() - new Date(t.updatedAt).getTime()) / DAY_MS)}d ago`,
+            ` — task last updated ${ageLabel(t.updatedAt)}, task added ${ageLabel(t.createdAt)}`,
         )
         .join("\n")
     : "(nothing stale)";
@@ -182,7 +194,9 @@ function buildReviewPrompt(
         .map(
           (p) =>
             `- ${p.name}: ${p.doneCount} done, ${p.openCount} open` +
-            (p.staleDays !== null ? `, last touched ${p.staleDays}d ago` : ""),
+            (p.daysSinceLastTaskUpdate !== null
+              ? `; project's most recent task activity: ${p.daysSinceLastTaskUpdate}d ago`
+              : ""),
         )
         .join("\n")
     : "(no projects)";
@@ -192,7 +206,8 @@ function buildReviewPrompt(
         .map(
           (t, i) =>
             `${i + 1}. [${t.priority}] ${t.title}` +
-            (t.projectName ? ` (${t.projectName})` : ""),
+            (t.projectName ? ` (${t.projectName})` : "") +
+            ` — status ${t.status ?? "(unknown)"}, task added ${ageLabel(t.createdAt)}`,
         )
         .join("\n")
     : "(none queued)";
@@ -205,16 +220,21 @@ ${winLines}
 STALE ITEMS (active tasks not touched in 14+ days):
 ${staleLines}
 
-PROJECT ACTIVITY:
+PROJECT ACTIVITY (project-level rollups — these numbers describe whole projects, not individual tasks):
 ${projectLines}
 
 ON DECK FOR NEXT WEEK (Today / Next / Waiting / Someday — items still open):
 ${upcomingLines}
 
+IMPORTANT — task age vs project age:
+- A task's age is what's printed on the task's own line ("task added today", "task last updated 14d old").
+- A project's "most recent task activity: Nd ago" is a project-level metric and may include older tasks that have nothing to do with the task you're discussing.
+- Never claim a specific task has been open for N days based on the project rollup. If a task was added today, say so. If a brand-new task lives inside an old project, say the task is new even if the project is older.
+
 Write the weekly review in EXACTLY this format and NOTHING else. No preamble, no quotes, no markdown:
 
 RECAP: <three to four sentences in first-person plural ("we") describing what actually moved this week. Lead with the most meaningful win. Reference specific projects and tasks above. Acknowledge what stalled if it matters. Tone: confident but not cheerleading. Suitable for pasting into a status update or weekly write-up.>
-FOCUS: <two to three sentences in first-person plural describing what we're prioritising next week and why. Anchor each priority to a concrete project or task from the data above. Mention any stale items that need a decision.>
+FOCUS: <two to three sentences in first-person plural describing what we're prioritising next week and why. Anchor each priority to a concrete project or task from the data above. When mentioning a task's age, use the age shown on that task's own line — not the project's rollup figure. Mention any stale items that need a decision.>
 
 Do not output anything before RECAP or after the FOCUS section.`;
 }
@@ -231,6 +251,7 @@ router.post("/review", async (c) => {
     .select({
       title: task.title,
       priority: task.priority,
+      createdAt: task.createdAt,
       updatedAt: task.updatedAt,
       projectName: project.name,
     })
@@ -244,6 +265,7 @@ router.post("/review", async (c) => {
     .select({
       title: task.title,
       priority: task.priority,
+      createdAt: task.createdAt,
       updatedAt: task.updatedAt,
       status: task.status,
       projectName: project.name,
@@ -260,6 +282,7 @@ router.post("/review", async (c) => {
       title: task.title,
       priority: task.priority,
       status: task.status,
+      createdAt: task.createdAt,
       updatedAt: task.updatedAt,
       projectName: project.name,
     })
@@ -290,11 +313,16 @@ router.post("/review", async (c) => {
     const own = allTasksForRollup.filter((t) => t.projectId === p.id);
     const doneCount = own.filter((t) => t.status === "done").length;
     const openCount = own.length - doneCount;
-    const lastTouched = own.length > 0
-      ? Math.max(...own.map((t) => new Date(t.updatedAt).getTime()))
-      : new Date(p.updatedAt).getTime();
-    const staleDays = lastTouched > 0 ? Math.round((now - lastTouched) / DAY_MS) : null;
-    return { name: p.name, doneCount, openCount, staleDays };
+    // For empty projects we fall back to the project's own updatedAt; otherwise
+    // we use the most-recent task. Either way this is the *project-level*
+    // signal — see the prompt's "task age vs project age" note.
+    const lastTouched =
+      own.length > 0
+        ? Math.max(...own.map((t) => new Date(t.updatedAt).getTime()))
+        : new Date(p.updatedAt).getTime();
+    const daysSinceLastTaskUpdate =
+      lastTouched > 0 ? Math.round((now - lastTouched) / DAY_MS) : null;
+    return { name: p.name, doneCount, openCount, daysSinceLastTaskUpdate };
   });
 
   const prompt = buildReviewPrompt(wins, stale, projectRollups, upcoming);
@@ -307,12 +335,15 @@ interface CalendarTask {
   status: string;
   dueText: string | null;
   projectName: string | null;
+  createdAt: Date;
 }
 
 function buildCalendarPrompt(
   scheduled: CalendarTask[],
   unscheduled: CalendarTask[],
   rangeLabel: string,
+  todayLabel: string,
+  futureDayLabels: string[],
 ): string {
   const schedLines = scheduled.length
     ? scheduled
@@ -320,7 +351,7 @@ function buildCalendarPrompt(
           (t, i) =>
             `${i + 1}. [${t.priority}] ${t.title}` +
             (t.projectName ? ` (${t.projectName})` : "") +
-            ` — due ${t.dueText ?? "(unset)"}`,
+            ` — due ${t.dueText ?? "(unset)"}, task added ${ageLabel(t.createdAt)}`,
         )
         .join("\n")
     : "(no scheduled items in this range)";
@@ -331,12 +362,20 @@ function buildCalendarPrompt(
           (t, i) =>
             `${i + 1}. [${t.priority}] ${t.title}` +
             (t.projectName ? ` (${t.projectName})` : "") +
-            ` — ${t.status}`,
+            ` — status ${t.status}, task added ${ageLabel(t.createdAt)}`,
         )
         .join("\n")
     : "(no unscheduled open tasks)";
 
-  return `You are a calm, specific planning assistant looking at the user's calendar for ${rangeLabel}. Reference tasks and projects by name. Don't invent items.
+  const futureList =
+    futureDayLabels.length > 0
+      ? futureDayLabels.join(", ")
+      : "(no future days remain in this range)";
+
+  return `You are a calm, specific planning assistant looking at the user's calendar for ${rangeLabel}.
+
+TODAY: ${todayLabel}
+DAYS AVAILABLE FOR NEW SUGGESTIONS (today + future days in this range only): ${futureList}
 
 SCHEDULED IN THIS RANGE (tasks with a due date this period):
 ${schedLines}
@@ -344,9 +383,15 @@ ${schedLines}
 UNSCHEDULED OPEN TASKS (today/next/waiting/someday with no due date):
 ${unschedLines}
 
+STRICT RULES — read carefully before writing:
+1. Only mention tasks and projects that appear by name in the lists above. Do NOT invent any task, project, codename, or initiative (e.g. "Project Phoenix", "pricing memo") — if it isn't in the lists, it doesn't exist.
+2. Never suggest scheduling work on a day that has already passed. Stick to the DAYS AVAILABLE list above.
+3. Don't invent ages — use only what's written on each task's own line.
+4. If both task lists are empty, simply say there's nothing on the calendar yet and suggest capturing or scheduling a task — do not invent anything to recommend.
+
 Write the recommendations in EXACTLY this format and NOTHING else. No preamble, no quotes, no markdown:
 
-RECOMMEND: <two or three sentences in first-person plural ("we") describing how to play this period. Lead with what's already scheduled and the highest-leverage move. If unscheduled items deserve a slot, name them and suggest when (e.g. "consider blocking Wednesday morning for the pricing memo"). Be concrete — anchor every suggestion to a real task or day.>
+RECOMMEND: <two or three sentences in first-person plural ("we") describing how to play this period. Lead with what's already scheduled and the highest-leverage move. If an unscheduled task deserves a slot, name it (from the list above) and suggest one of the days in DAYS AVAILABLE. Be concrete — anchor every suggestion to a real task and an allowed day.>
 
 Do not output anything before RECOMMEND or after the paragraph.`;
 }
@@ -372,6 +417,7 @@ router.post("/calendar/recommend", async (c) => {
       status: task.status,
       due: task.due,
       dueText: task.dueText,
+      createdAt: task.createdAt,
       projectName: project.name,
     })
     .from(task)
@@ -390,8 +436,67 @@ router.post("/calendar/recommend", async (c) => {
   // Format a human range label like "Mon May 18 → Sun May 24".
   const rangeLabel = `${from.toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric" })} → ${to.toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric" })}`;
 
-  const prompt = buildCalendarPrompt(inRange, unscheduled, rangeLabel);
-  return streamFromOllama(prompt, 0.5);
+  // Both lists empty? Don't call the model — small LLMs invent items when
+  // there's no signal. Stream a static answer in the same NDJSON shape so the
+  // client parser is unchanged.
+  if (inRange.length === 0 && unscheduled.length === 0) {
+    return staticRecommendation(
+      "Nothing on the calendar for this range yet. Capture or schedule a task to get started.",
+    );
+  }
+
+  // Build a list of human-readable day labels that are today or future, so
+  // the model can't suggest scheduling work on a day that has already passed.
+  const todayStart = new Date();
+  todayStart.setHours(0, 0, 0, 0);
+  const futureDayLabels: string[] = [];
+  const dayCursor = new Date(from);
+  dayCursor.setHours(0, 0, 0, 0);
+  while (dayCursor <= to && futureDayLabels.length < 14) {
+    if (dayCursor.getTime() >= todayStart.getTime()) {
+      futureDayLabels.push(
+        dayCursor.toLocaleDateString(undefined, {
+          weekday: "long",
+          month: "short",
+          day: "numeric",
+        }),
+      );
+    }
+    dayCursor.setDate(dayCursor.getDate() + 1);
+  }
+
+  const todayLabel = todayStart.toLocaleDateString(undefined, {
+    weekday: "long",
+    month: "short",
+    day: "numeric",
+  });
+
+  const prompt = buildCalendarPrompt(
+    inRange,
+    unscheduled,
+    rangeLabel,
+    todayLabel,
+    futureDayLabels,
+  );
+  // Lower temperature reduces the hallucination rate noticeably for small
+  // models like gemma3:4b.
+  return streamFromOllama(prompt, 0.2);
 });
+
+/** Returns a one-shot NDJSON stream with the given text, matching the shape
+ *  the client expects from Ollama. Used when we'd rather not call the model. */
+function staticRecommendation(text: string): Response {
+  const body = `RECOMMEND: ${text}`;
+  const lines = [
+    JSON.stringify({ response: body, done: false }),
+    JSON.stringify({ done: true }),
+  ].join("\n") + "\n";
+  return new Response(body ? lines : "", {
+    headers: {
+      "content-type": "application/x-ndjson",
+      "cache-control": "no-cache, no-transform",
+    },
+  });
+}
 
 export const briefingRoutes = router;

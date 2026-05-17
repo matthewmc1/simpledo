@@ -1,12 +1,16 @@
 import { useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import type { Project, Task } from "@shared/types";
+import { signInGoogle } from "../auth/api";
+import { useSession } from "../auth/SessionProvider";
+import type { GoogleEvent } from "../api/google";
 import { BriefingShell } from "../components/briefing/BriefingShell";
 import { ViewHeader } from "../components/briefing/ViewHeader";
 import { btnGhost, btnPrimary } from "../components/briefing/buttons";
 import { PriorityMark } from "../components/PriorityMark";
 import { useCalendarRecommendStore } from "../stores/calendarRecommendStore";
 import { useCaptureModal } from "../stores/captureStore";
+import { useGoogleCalendarStore } from "../stores/googleCalendarStore";
 import { useEnsureProjectsLoaded, useProjectStore } from "../stores/projectStore";
 import { useEnsureTasksLoaded, useTaskStore } from "../stores/taskStore";
 import { useTweaks } from "../tweaks/TweaksProvider";
@@ -129,6 +133,48 @@ export function WeekView() {
       });
   }, [tasks]);
 
+  // Google Calendar (read-only). We only call /api/google/status for real
+  // accounts — the demo sandbox doesn't have a Google linkage.
+  const googleStatus = useGoogleCalendarStore((s) => s.status);
+  const loadGoogleStatus = useGoogleCalendarStore((s) => s.loadStatus);
+  const loadGoogleEvents = useGoogleCalendarStore((s) => s.loadEvents);
+  const googleEvents = useGoogleCalendarStore((s) => s.events);
+  const googleLoadingEvents = useGoogleCalendarStore((s) => s.loadingEvents);
+  const { state: sessionState } = useSession();
+  const isDemoUser =
+    sessionState.status === "authenticated" && sessionState.user.isDemo;
+
+  useEffect(() => {
+    if (sessionState.status !== "authenticated" || isDemoUser) return;
+    if (googleStatus === null) void loadGoogleStatus();
+  }, [sessionState, isDemoUser, googleStatus, loadGoogleStatus]);
+
+  useEffect(() => {
+    if (!googleStatus?.calendarScopeGranted) return;
+    const fromIso = rangeFrom.toISOString();
+    const toIso = addDays(rangeTo, 1).toISOString();
+    void loadGoogleEvents(fromIso, toIso);
+  }, [googleStatus?.calendarScopeGranted, rangeFrom, rangeTo, loadGoogleEvents]);
+
+  // Group events by day-key for the same lookup the task grid uses. We
+  // deliberately use ONLY the live googleEvents array — there is no demo /
+  // fixture calendar. A user who hasn't connected Google sees task chips and
+  // nothing else; the connect CTA banner is the only "calendar" affordance
+  // until they grant access.
+  const eventsByDayKey = useMemo(() => {
+    const m = new Map<string, GoogleEvent[]>();
+    const showEvents = !!googleStatus?.calendarScopeGranted;
+    if (!showEvents) return m;
+    for (const e of googleEvents) {
+      const day = startOfDay(new Date(e.start));
+      const key = day.toISOString();
+      const arr = m.get(key) ?? [];
+      arr.push(e);
+      m.set(key, arr);
+    }
+    return m;
+  }, [googleEvents, googleStatus?.calendarScopeGranted]);
+
   // AI recommendations
   const recommendStatus = useCalendarRecommendStore((s) => s.status);
   const recommend = useCalendarRecommendStore((s) => s.recommend);
@@ -185,6 +231,15 @@ export function WeekView() {
       />
 
       <div style={{ padding: "20px 40px 40px" }}>
+        {!isDemoUser && googleStatus && (
+          <GoogleConnectBanner
+            status={googleStatus}
+            loadingEvents={googleLoadingEvents}
+            eventCount={googleEvents.length}
+          />
+        )}
+        {isDemoUser && <DemoNotice />}
+
         {showBanner && (
           <RecommendBanner
             status={recommendStatus}
@@ -203,7 +258,11 @@ export function WeekView() {
         <div
           style={{
             display: "grid",
-            gridTemplateColumns: viewMode === "week" ? "repeat(7, 1fr)" : "1fr",
+            // `minmax(0, 1fr)` instead of bare `1fr` so long chip titles can't
+            // widen their own column. Without this, `1fr` resolves to
+            // `minmax(auto, 1fr)` which respects intrinsic content width.
+            gridTemplateColumns:
+              viewMode === "week" ? "repeat(7, minmax(0, 1fr))" : "minmax(0, 1fr)",
             border: "1px solid var(--hairline)",
             borderRadius: 4,
             overflow: "hidden",
@@ -216,6 +275,7 @@ export function WeekView() {
               day={d}
               isToday={sameDay(d, today)}
               tasks={byDayKey.get(d.toISOString()) ?? []}
+              events={eventsByDayKey.get(d.toISOString()) ?? []}
               projectsById={projectsById}
               singleColumn={viewMode === "day"}
             />
@@ -279,11 +339,12 @@ interface DayColumnProps {
   day: Date;
   isToday: boolean;
   tasks: CalendarTask[];
+  events: GoogleEvent[];
   projectsById: Map<string, Project>;
   singleColumn: boolean;
 }
 
-function DayColumn({ day, isToday, tasks, projectsById, singleColumn }: DayColumnProps) {
+function DayColumn({ day, isToday, tasks, events, projectsById, singleColumn }: DayColumnProps) {
   const weekday = WEEKDAY_SHORT[(day.getDay() + 6) % 7];
   return (
     <div
@@ -295,6 +356,9 @@ function DayColumn({ day, isToday, tasks, projectsById, singleColumn }: DayColum
         minHeight: singleColumn ? 480 : 320,
         display: "flex",
         flexDirection: "column",
+        // Don't let chip contents expand the column past its grid track.
+        minWidth: 0,
+        overflow: "hidden",
       }}
     >
       <header
@@ -354,7 +418,10 @@ function DayColumn({ day, isToday, tasks, projectsById, singleColumn }: DayColum
           flex: 1,
         }}
       >
-        {tasks.length === 0 ? (
+        {events.map((e) => (
+          <EventChip key={e.id} event={e} large={singleColumn} />
+        ))}
+        {tasks.length === 0 && events.length === 0 ? (
           <p
             style={{
               fontFamily: "var(--serif)",
@@ -373,6 +440,189 @@ function DayColumn({ day, isToday, tasks, projectsById, singleColumn }: DayColum
           ))
         )}
       </div>
+    </div>
+  );
+}
+
+function EventChip({ event, large }: { event: GoogleEvent; large?: boolean }) {
+  const [expanded, setExpanded] = useState(false);
+  const timeLabel = event.allDay
+    ? "All day"
+    : new Date(event.start).toLocaleTimeString(undefined, {
+        hour: "numeric",
+        minute: "2-digit",
+      });
+  const timeRangeLabel = event.allDay
+    ? "All day"
+    : `${timeLabel} – ${new Date(event.end).toLocaleTimeString(undefined, {
+        hour: "numeric",
+        minute: "2-digit",
+      })}`;
+  const tooltip = [event.title, event.location, event.calendarName]
+    .filter(Boolean)
+    .join(" · ");
+
+  // Show the disclosure chevron whenever there's *something* extra beyond the
+  // title — time range, calendar name, location, description, or a Google
+  // link to deep-link out to.
+  const hasPreviewExtras = !!(
+    event.location ||
+    event.description ||
+    event.htmlLink ||
+    !event.allDay ||
+    event.calendarName
+  );
+
+  return (
+    <div
+      style={{
+        background: "color-mix(in oklch, var(--ink) 4%, var(--paper))",
+        border: "1px solid var(--hairline)",
+        borderRadius: 3,
+        // Two-tone left edge so events are scannable even when the column is
+        // narrow and the title gets truncated.
+        boxShadow: "inset 3px 0 0 var(--muted)",
+        overflow: "hidden",
+      }}
+    >
+      <button
+        type="button"
+        onClick={() => setExpanded((v) => !v)}
+        title={tooltip}
+        aria-expanded={expanded}
+        style={{
+          width: "100%",
+          padding: large ? "8px 12px 8px 14px" : "5px 8px 5px 11px",
+          background: "transparent",
+          border: "none",
+          color: "var(--ink)",
+          cursor: hasPreviewExtras ? "pointer" : "default",
+          display: "flex",
+          alignItems: "baseline",
+          gap: 8,
+          minHeight: large ? 36 : 28,
+          textAlign: "left",
+          minWidth: 0,
+        }}
+      >
+        <span
+          style={{
+            fontFamily: "var(--mono)",
+            fontSize: 10,
+            letterSpacing: "0.04em",
+            color: "var(--muted)",
+            flexShrink: 0,
+            minWidth: large ? 56 : 44,
+          }}
+        >
+          {timeLabel}
+        </span>
+        <span
+          style={{
+            fontFamily: "var(--serif)",
+            fontStyle: "italic",
+            fontSize: large ? 14 : 12,
+            lineHeight: 1.3,
+            color: "var(--ink)",
+            overflow: "hidden",
+            textOverflow: "ellipsis",
+            whiteSpace: "nowrap",
+            flex: 1,
+            minWidth: 0,
+          }}
+        >
+          {event.title}
+        </span>
+        {hasPreviewExtras && (
+          <span
+            style={{
+              color: "var(--muted)",
+              fontFamily: "var(--mono)",
+              fontSize: 10,
+              flexShrink: 0,
+            }}
+            aria-hidden="true"
+          >
+            {expanded ? "▴" : "▾"}
+          </span>
+        )}
+      </button>
+
+      {expanded && (
+        <div
+          style={{
+            padding: large ? "0 12px 10px 14px" : "0 8px 8px 11px",
+            borderTop: "1px dotted var(--hairline)",
+            paddingTop: 8,
+            display: "flex",
+            flexDirection: "column",
+            gap: 6,
+            minWidth: 0,
+          }}
+        >
+          <div
+            style={{
+              fontFamily: "var(--mono)",
+              fontSize: 10,
+              letterSpacing: "0.05em",
+              color: "var(--muted)",
+            }}
+          >
+            {timeRangeLabel}
+            {event.calendarName ? ` · ${event.calendarName}` : ""}
+          </div>
+          {event.location && (
+            <div
+              style={{
+                fontFamily: "var(--ui)",
+                fontSize: 12,
+                color: "var(--ink)",
+                overflow: "hidden",
+                textOverflow: "ellipsis",
+                whiteSpace: "nowrap",
+              }}
+            >
+              📍 {event.location}
+            </div>
+          )}
+          {event.description && (
+            <div
+              style={{
+                fontFamily: "var(--serif)",
+                fontStyle: "italic",
+                fontSize: 12,
+                lineHeight: 1.45,
+                color: "var(--ink)",
+                // Three-line preview; user can open in Google for the full body.
+                display: "-webkit-box",
+                WebkitBoxOrient: "vertical",
+                WebkitLineClamp: 3,
+                overflow: "hidden",
+              }}
+            >
+              {event.description}
+            </div>
+          )}
+          {event.htmlLink && (
+            <a
+              href={event.htmlLink}
+              target="_blank"
+              rel="noopener noreferrer"
+              style={{
+                fontFamily: "var(--mono)",
+                fontSize: 10,
+                letterSpacing: "0.06em",
+                textTransform: "uppercase",
+                color: "var(--accent)",
+                textDecoration: "none",
+                alignSelf: "flex-start",
+              }}
+            >
+              Open in Google ↗
+            </a>
+          )}
+        </div>
+      )}
     </div>
   );
 }
@@ -540,6 +790,273 @@ interface BannerProps {
   error: string | null;
   rangeLabel: string;
   onRegenerate: () => void;
+}
+
+function GoogleConnectBanner({
+  status,
+  loadingEvents,
+  eventCount,
+}: {
+  status: { connected: boolean; calendarScopeGranted: boolean; code?: string };
+  loadingEvents: boolean;
+  eventCount: number;
+}) {
+  // Three states:
+  // 1. Connected + scope granted  → quiet status pill ("Google · 5 events" or syncing).
+  // 2. Connected but no scope     → reconnect-to-grant-scope.
+  // 3. Not connected              → connect CTA.
+
+  if (status.connected && status.calendarScopeGranted) {
+    return (
+      <div
+        style={{
+          marginBottom: 16,
+          padding: "8px 14px",
+          border: "1px solid var(--hairline)",
+          borderRadius: 4,
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "space-between",
+          fontFamily: "var(--mono)",
+          fontSize: 10,
+          letterSpacing: "0.08em",
+          textTransform: "uppercase",
+          color: "var(--muted)",
+        }}
+      >
+        <span style={{ display: "inline-flex", alignItems: "center", gap: 8 }}>
+          <span
+            style={{
+              width: 6,
+              height: 6,
+              borderRadius: "50%",
+              background: "#2d7a4c",
+              animation: loadingEvents ? "pulse 1.4s infinite" : "none",
+            }}
+          />
+          Google Calendar ·{" "}
+          {loadingEvents
+            ? "syncing…"
+            : `${eventCount} event${eventCount === 1 ? "" : "s"} this range`}
+        </span>
+      </div>
+    );
+  }
+
+  const needsReconsent = status.connected && !status.calendarScopeGranted;
+  const headline = needsReconsent
+    ? "Grant calendar access to see your events here."
+    : "Connect Google Calendar to see your events alongside your tasks.";
+  const cta = needsReconsent ? "Reconnect Google" : "Connect Google";
+  const subhint = needsReconsent
+    ? "We added the read-only calendar scopes after you signed up — Google needs you to grant them once."
+    : "Read-only · we never write to your calendar. Your tasks stay where they are.";
+
+  return (
+    <div
+      style={{
+        marginBottom: 16,
+        padding: "14px 18px",
+        border: "1px solid color-mix(in oklch, var(--accent) 22%, transparent)",
+        background: "color-mix(in oklch, var(--accent) 6%, var(--paper))",
+        borderRadius: 4,
+      }}
+    >
+      <div
+        style={{
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "space-between",
+          gap: 16,
+        }}
+      >
+        <div style={{ minWidth: 0 }}>
+          <div
+            style={{
+              fontFamily: "var(--mono)",
+              fontSize: 10,
+              letterSpacing: "0.1em",
+              textTransform: "uppercase",
+              color: "var(--accent)",
+              marginBottom: 4,
+            }}
+          >
+            Integration · Google Calendar
+          </div>
+          <p
+            style={{
+              fontFamily: "var(--serif)",
+              fontStyle: "italic",
+              fontSize: 15,
+              lineHeight: 1.4,
+              margin: "0 0 4px",
+              color: "var(--ink)",
+            }}
+          >
+            {headline}
+          </p>
+          <p
+            style={{
+              fontFamily: "var(--mono)",
+              fontSize: 10,
+              letterSpacing: "0.04em",
+              color: "var(--muted)",
+              margin: 0,
+            }}
+          >
+            {subhint}
+          </p>
+        </div>
+        <button
+          type="button"
+          onClick={() => {
+            void signInGoogle().catch((e) => {
+              console.error("Google sign-in failed:", e);
+              alert(e instanceof Error ? e.message : String(e));
+            });
+          }}
+          style={{
+            background: "var(--ink)",
+            color: "var(--paper)",
+            border: "none",
+            padding: "8px 14px",
+            borderRadius: 3,
+            fontFamily: "var(--ui)",
+            fontSize: 13,
+            fontWeight: 500,
+            cursor: "pointer",
+            whiteSpace: "nowrap",
+            flexShrink: 0,
+          }}
+        >
+          {cta} →
+        </button>
+      </div>
+
+      <GoogleSetupDisclosure mode={needsReconsent ? "reconnect" : "connect"} />
+    </div>
+  );
+}
+
+function GoogleSetupDisclosure({ mode }: { mode: "connect" | "reconnect" }) {
+  const [open, setOpen] = useState(false);
+  return (
+    <div style={{ marginTop: 12, borderTop: "1px dotted var(--hairline)", paddingTop: 10 }}>
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        aria-expanded={open}
+        style={{
+          background: "transparent",
+          border: "none",
+          color: "var(--accent)",
+          cursor: "pointer",
+          fontFamily: "var(--mono)",
+          fontSize: 10,
+          letterSpacing: "0.1em",
+          textTransform: "uppercase",
+          padding: 0,
+        }}
+      >
+        {open ? "▾" : "▸"} Google Cloud Console setup
+      </button>
+      {open && (
+        <ol
+          style={{
+            margin: "10px 0 0",
+            paddingLeft: 20,
+            display: "flex",
+            flexDirection: "column",
+            gap: 8,
+            fontFamily: "var(--ui)",
+            fontSize: 13,
+            lineHeight: 1.5,
+            color: "var(--ink)",
+          }}
+        >
+          <li>
+            On the{" "}
+            <a
+              href="https://console.cloud.google.com/apis/credentials/consent"
+              target="_blank"
+              rel="noopener noreferrer"
+              style={{ color: "var(--accent)" }}
+            >
+              OAuth consent screen
+            </a>
+            , under <em>Scopes → Add or remove scopes</em>, add{" "}
+            <code style={codeStyle}>https://www.googleapis.com/auth/calendar.readonly</code> and{" "}
+            <code style={codeStyle}>https://www.googleapis.com/auth/calendar.events.readonly</code>.
+          </li>
+          <li>
+            Enable the{" "}
+            <a
+              href="https://console.cloud.google.com/apis/library/calendar-json.googleapis.com"
+              target="_blank"
+              rel="noopener noreferrer"
+              style={{ color: "var(--accent)" }}
+            >
+              Google Calendar API
+            </a>{" "}
+            for your project.
+          </li>
+          <li>
+            If you don't have an OAuth client yet, create one under{" "}
+            <a
+              href="https://console.cloud.google.com/apis/credentials"
+              target="_blank"
+              rel="noopener noreferrer"
+              style={{ color: "var(--accent)" }}
+            >
+              Credentials → OAuth client ID → Web application
+            </a>{" "}
+            with redirect URI{" "}
+            <code style={codeStyle}>http://localhost:4000/api/auth/callback/google</code>, then put
+            the client ID + secret into <code style={codeStyle}>.env.local</code>.
+          </li>
+          {mode === "reconnect" ? (
+            <li>
+              Click <strong>Reconnect Google</strong> above — you'll be prompted to grant the new
+              scopes. Once you accept, your events appear inline with your tasks.
+            </li>
+          ) : (
+            <li>
+              Click <strong>Connect Google</strong> above. You'll see Google's consent screen for
+              read-only calendar access.
+            </li>
+          )}
+        </ol>
+      )}
+    </div>
+  );
+}
+
+const codeStyle: React.CSSProperties = {
+  fontFamily: "var(--mono)",
+  fontSize: 11,
+  background: "color-mix(in oklch, var(--ink) 6%, var(--paper))",
+  padding: "1px 5px",
+  borderRadius: 2,
+  border: "1px solid var(--hairline)",
+};
+
+function DemoNotice() {
+  return (
+    <div
+      style={{
+        marginBottom: 16,
+        padding: "10px 14px",
+        border: "1px dashed var(--hairline)",
+        borderRadius: 4,
+        fontFamily: "var(--serif)",
+        fontStyle: "italic",
+        color: "var(--muted)",
+        fontSize: 13,
+      }}
+    >
+      Demo accounts can't link Google Calendar. Sign in with Google to see your events here.
+    </div>
+  );
 }
 
 function RecommendBanner({ status, recommend, error, rangeLabel, onRegenerate }: BannerProps) {

@@ -38,13 +38,29 @@ export async function signInEmail(email: string): Promise<ClientUser> {
   return data.user;
 }
 
-export function signInGoogle(): void {
-  // Better Auth's social sign-in endpoint redirects to Google; we let it.
-  const params = new URLSearchParams({
-    provider: "google",
-    callbackURL: window.location.origin + "/",
+export async function signInGoogle(): Promise<void> {
+  // Better Auth's social sign-in is a POST that returns the provider's
+  // authorization URL — we then navigate the browser to it. Doing a direct
+  // GET (as we used to) hits Better Auth as 404 because it doesn't expose a
+  // GET initiator for /sign-in/social.
+  const res = await fetch("/api/auth/sign-in/social", {
+    method: "POST",
+    credentials: "include",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      provider: "google",
+      callbackURL: window.location.origin + "/",
+    }),
   });
-  window.location.href = `/api/auth/sign-in/social?${params.toString()}`;
+  if (!res.ok) {
+    const text = await res.text().catch(() => res.statusText);
+    throw new Error(`Google sign-in init failed (${res.status}): ${text}`);
+  }
+  const data = (await res.json()) as { url?: string; redirect?: boolean };
+  if (!data.url) {
+    throw new Error("Google sign-in init returned no redirect URL");
+  }
+  window.location.href = data.url;
 }
 
 export async function signOut(): Promise<void> {

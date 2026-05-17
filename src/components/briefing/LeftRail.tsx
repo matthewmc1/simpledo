@@ -8,6 +8,7 @@ import {
 import { useProjectCreateModal } from "../../stores/projectModalStore";
 import { useTaskStore } from "../../stores/taskStore";
 import { SourceIcon } from "../SourceIcon";
+import { UserCard } from "../UserCard";
 
 interface ListItem {
   name: string;
@@ -339,41 +340,19 @@ export function LeftRail({ activeOverride }: Props) {
         </ul>
       </div>
 
-      <div style={{ marginTop: "auto", paddingTop: 16, borderTop: "1px solid rgba(255,255,255,0.08)" }}>
+      <div
+        style={{
+          marginTop: "auto",
+          paddingTop: 16,
+          borderTop: "1px solid rgba(255,255,255,0.08)",
+          display: "flex",
+          flexDirection: "column",
+          gap: 12,
+        }}
+      >
+        <UserCard />
         <div
           style={{
-            fontFamily: "var(--mono)",
-            fontSize: 9,
-            letterSpacing: "0.1em",
-            textTransform: "uppercase",
-            color: "rgba(255,255,255,0.4)",
-            marginBottom: 8,
-          }}
-        >
-          Integrations
-        </div>
-        <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-          {(["linear", "jira", "gmail", "calendar", "slack"] as const).map((s) => (
-            <span
-              key={s}
-              style={{
-                display: "inline-flex",
-                alignItems: "center",
-                justifyContent: "center",
-                width: 24,
-                height: 24,
-                borderRadius: 3,
-                background: "rgba(255,255,255,0.06)",
-                color: "rgba(255,255,255,0.6)",
-              }}
-            >
-              <SourceIcon source={s} size={12} />
-            </span>
-          ))}
-        </div>
-        <div
-          style={{
-            marginTop: 14,
             display: "flex",
             alignItems: "center",
             gap: 8,

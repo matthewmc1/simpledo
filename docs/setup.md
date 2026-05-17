@@ -10,18 +10,25 @@
    # Launch Ollama with CORS allowed from the server origin:
    OLLAMA_ORIGINS="http://localhost:4000" ollama serve
    ```
-3. **Create the Google OAuth client** (needed for the "Continue with Google" button — the "Try the demo" path works without it):
+3. **Create the Google OAuth client** (needed for the "Continue with Google" button and for Calendar read — the "Try the demo" path works without it):
    1. Open <https://console.cloud.google.com/apis/credentials>.
    2. New project (or pick existing). Make sure billing is *not* required for this — OAuth credentials are free.
    3. *OAuth consent screen* → External → fill in app name "Simple Do", your email, save. Add yourself as a test user.
-   4. *Credentials* → Create credentials → OAuth client ID → Web application.
-   5. Authorized JavaScript origins: `http://localhost:5173`.
-   6. Authorized redirect URIs: `http://localhost:4000/api/auth/callback/google`.
-   7. Copy the **Client ID** and **Client secret** into `.env.local`:
+   4. **Add the scopes you need** under *OAuth consent screen → Scopes → Add or remove scopes*:
+      - `openid`, `email`, `profile` (always required)
+      - `https://www.googleapis.com/auth/calendar.readonly`
+      - `https://www.googleapis.com/auth/calendar.events.readonly`
+   5. *Credentials* → Create credentials → OAuth client ID → Web application.
+   6. Authorized JavaScript origins: `http://localhost:5173`.
+   7. Authorized redirect URIs: `http://localhost:4000/api/auth/callback/google`.
+   8. Copy the **Client ID** and **Client secret** into `.env.local`:
       ```
       GOOGLE_CLIENT_ID=…
       GOOGLE_CLIENT_SECRET=…
       ```
+   9. **Enable the Calendar API** for the project: <https://console.cloud.google.com/apis/library/calendar-json.googleapis.com> → Enable.
+
+   > If you already had a Google client set up before the Calendar work landed, you'll need to (a) add the two `calendar*.readonly` scopes on the consent screen, (b) enable the Calendar API in the library, and (c) **sign out and back in via Google** so the new scopes appear on your access token. The Week view's banner will prompt you with "Reconnect Google" until that's done.
 
 ## Every dev session
 

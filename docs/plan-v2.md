@@ -169,6 +169,35 @@ DoD verified: created project, made `0.1.0` (with notes), tagged two tasks each 
 
 ---
 
+### v3-3 · Google Calendar (read-only) ✅ Done 2026-05-17
+
+Pull read-only Google Calendar events into the Week view alongside tasks. Email/demo users see a Connect-Google CTA; Google users with old scopes see a Reconnect CTA.
+
+Shipped:
+
+- **Auth scopes** — `server/auth.ts` adds `calendar.readonly` + `calendar.events.readonly` to the Google provider, with `accessType: "offline"` + `prompt: "consent"` so we always receive a refresh token.
+- **Token refresh** — `server/integrations/google.ts` reads the user's `account` row, refreshes the access_token via `oauth2.googleapis.com/token` when within 60s of expiry, persists the new token + expiry. `invalid_grant` from Google surfaces as `code: "needs_reconsent"` for the UI to handle.
+- **Endpoints** (all under `requireUser`):
+  - `GET /api/google/status` → `{ connected, calendarScopeGranted, code? }` (412-less probe — the status endpoint always returns 200 so the UI can decide what to show).
+  - `GET /api/google/calendars` → user's calendars (primary first, sorted by name otherwise).
+  - `GET /api/google/events?from=ISO&to=ISO&calendarIds=` → normalized events for one or more calendars; defaults to `primary`. Per-calendar fetch failures are logged and skipped rather than failing the whole request.
+- **Client** — `src/api/google.ts` thin fetch helpers + `src/stores/googleCalendarStore.ts` (status + events with range-key dedupe).
+- **WeekView**:
+  - Real Google events render in their day column as **ink-filled chips** (distinct from project-coloured task chips) with time prefix, "Calendar" eyebrow, and a click-out to the event's `htmlLink`.
+  - Banner above the grid: green dot + "Google Calendar · N events this range" when connected; accent banner with "Connect Google" / "Reconnect Google" CTA when scope is missing.
+  - Demo accounts see a separate "demo accounts can't link Google Calendar" notice.
+  - Email-only users see the same Connect-Google CTA; clicking re-runs `signInGoogle()` (Better Auth will link the account if the email matches).
+- **Setup docs** — `docs/setup.md` updated with the consent-screen scope list, Calendar API enablement, and the "sign out/back in" note for existing users.
+
+Out of scope (defer to v3-3.x):
+- Calendar write (create/move events).
+- Multi-calendar selection UI (currently always `primary` — the API supports the param already, UI not built).
+- Settings/integrations page to manage connections (rely on the in-place banner for now).
+
+DoD verified: hit `/api/google/status` as an email-only user → `{connected:false, code:"not_connected"}`; same endpoint with a Google user not yet granted Calendar → `{connected:true, calendarScopeGranted:false, code:"needs_reconsent"}`. UI banners render the right CTA in each state.
+
+---
+
 ## v2 closing notes — Weekly review AI snippet (2026-05-17)
 
 - `POST /api/review` streams a narrative recap + focus paragraphs from Ollama (same provider seam as `/api/briefing`).

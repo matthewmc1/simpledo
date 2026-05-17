@@ -177,23 +177,6 @@ export function TodayView() {
             >
               Weekly review
             </Link>
-            <div
-              style={{
-                width: 32,
-                height: 32,
-                borderRadius: "50%",
-                background: "var(--accent)",
-                color: "var(--paper)",
-                display: "flex",
-                alignItems: "center",
-                justifyContent: "center",
-                fontFamily: "var(--serif)",
-                fontWeight: 500,
-                fontSize: 13,
-              }}
-            >
-              {userInitials(sessionState.status === "authenticated" ? sessionState.user.name : firstName)}
-            </div>
           </div>
         </header>
 
@@ -717,13 +700,6 @@ function InboxRow({ item, divider }: { item: InboxItem; divider: boolean }) {
       </div>
     </li>
   );
-}
-
-function userInitials(name: string): string {
-  const parts = name.trim().split(/\s+/).filter(Boolean);
-  if (parts.length === 0) return "?";
-  if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase();
-  return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase();
 }
 
 function greeting(): string {

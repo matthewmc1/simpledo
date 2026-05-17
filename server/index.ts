@@ -4,6 +4,7 @@ import { cors } from "hono/cors";
 import { env } from "./env";
 import { authRoutes } from "./routes/auth";
 import { briefingRoutes } from "./routes/briefing";
+import { googleRoutes } from "./routes/google";
 import { inboxRoutes } from "./routes/inbox";
 import { meRoutes } from "./routes/me";
 import { projectRoutes } from "./routes/projects";
@@ -32,6 +33,7 @@ app.route("/api", taskRoutes);
 app.route("/api", subtaskRoutes);
 app.route("/api", inboxRoutes);
 app.route("/api", briefingRoutes);
+app.route("/api", googleRoutes);
 
 app.onError((err, c) => {
   if (err instanceof HTTPError) {

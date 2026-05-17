@@ -32,6 +32,20 @@ export const auth = betterAuth({
         google: {
           clientId: env.GOOGLE_CLIENT_ID,
           clientSecret: env.GOOGLE_CLIENT_SECRET,
+          // Read-only calendar access. Users have to consent to this scope —
+          // existing users who signed up before this scope was added will need
+          // to sign out and back in via Google to grant it.
+          scope: [
+            "openid",
+            "email",
+            "profile",
+            "https://www.googleapis.com/auth/calendar.readonly",
+            "https://www.googleapis.com/auth/calendar.events.readonly",
+          ],
+          // Ensure we get a refresh_token on the first consent so we can renew
+          // the 1-hour access tokens without prompting the user every hour.
+          accessType: "offline",
+          prompt: "consent",
         },
       }
     : {},
