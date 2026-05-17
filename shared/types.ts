@@ -57,6 +57,8 @@ export const TaskSchema = z.object({
   due: z.string().nullable(),
   dueText: z.string().nullable(),
   projectId: z.string().nullable(),
+  releaseId: z.string().nullable(),
+  clientDescription: z.string(),
   integration: z.string().nullable(),
   integrationId: z.string().nullable(),
   createdAt: z.string(),
@@ -64,6 +66,44 @@ export const TaskSchema = z.object({
   subtasks: z.array(SubtaskSchema),
 });
 export type Task = z.infer<typeof TaskSchema>;
+
+// ── Releases ───────────────────────────────────────────────────────────────
+
+/** MAJOR.MINOR.PATCH — no pre-release suffix yet. */
+export const SemverSchema = z.string().regex(/^\d+\.\d+\.\d+$/, "Version must be MAJOR.MINOR.PATCH");
+export type Semver = z.infer<typeof SemverSchema>;
+
+export const ReleaseSchema = z.object({
+  id: z.string(),
+  projectId: z.string(),
+  version: z.string(),
+  name: z.string().nullable(),
+  notes: z.string(),
+  releasedAt: z.string().nullable(),
+  createdAt: z.string(),
+  updatedAt: z.string(),
+});
+export type Release = z.infer<typeof ReleaseSchema>;
+
+export const ReleasesResponseSchema = z.object({ releases: z.array(ReleaseSchema) });
+
+export const CreateReleaseInputSchema = z.object({
+  version: SemverSchema,
+  name: z.string().max(120).optional(),
+  notes: z.string().max(5000).optional(),
+  releasedAt: z.string().datetime().nullable().optional(),
+});
+export type CreateReleaseInput = z.infer<typeof CreateReleaseInputSchema>;
+
+export const UpdateReleaseInputSchema = z
+  .object({
+    version: SemverSchema,
+    name: z.string().max(120).nullable(),
+    notes: z.string().max(5000),
+    releasedAt: z.string().datetime().nullable(),
+  })
+  .partial();
+export type UpdateReleaseInput = z.infer<typeof UpdateReleaseInputSchema>;
 
 export const InboxItemSchema = z.object({
   id: z.string(),
@@ -116,6 +156,8 @@ export const UpdateTaskInputSchema = z
     due: z.string().datetime().nullable(),
     dueText: z.string().max(80).nullable(),
     projectId: z.string().uuid().nullable(),
+    releaseId: z.string().uuid().nullable(),
+    clientDescription: z.string().max(500),
   })
   .partial();
 export type UpdateTaskInput = z.infer<typeof UpdateTaskInputSchema>;
@@ -125,7 +167,9 @@ export const CreateTaskInputSchema = z.object({
   status: StatusSchema.optional(),
   priority: PrioritySchema.optional(),
   projectId: z.string().uuid().nullable().optional(),
+  releaseId: z.string().uuid().nullable().optional(),
   notes: z.string().max(10_000).optional(),
+  clientDescription: z.string().max(500).optional(),
 });
 export type CreateTaskInput = z.infer<typeof CreateTaskInputSchema>;
 
@@ -136,6 +180,11 @@ export const UpdateSubtaskInputSchema = z
   })
   .partial();
 export type UpdateSubtaskInput = z.infer<typeof UpdateSubtaskInputSchema>;
+
+export const CreateSubtaskInputSchema = z.object({
+  title: z.string().min(1).max(500),
+});
+export type CreateSubtaskInput = z.infer<typeof CreateSubtaskInputSchema>;
 
 // ── Auth ──────────────────────────────────────────────────────────────────
 

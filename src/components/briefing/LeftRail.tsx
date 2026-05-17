@@ -105,7 +105,7 @@ export function LeftRail({ activeOverride }: Props) {
         }}
       >
         <span>Capture anything</span>
-        <span style={{ background: "rgba(255,255,255,0.08)", padding: "2px 5px", borderRadius: 2, fontSize: 10 }}>⌘N</span>
+        <span style={{ background: "rgba(255,255,255,0.08)", padding: "2px 5px", borderRadius: 2, fontSize: 10 }}>⌘K</span>
       </button>
 
       <div>

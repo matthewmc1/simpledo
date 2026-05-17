@@ -75,10 +75,10 @@ export function TodayView() {
   const fallbackSummary = !briefingReady
     ? ""
     : todayTasks.length === 0 && inboxItems.length === 0
-      ? "Nothing in Today and inbox is zero. Capture a thought with ⌘N or plan a project to get rolling."
+      ? "Nothing in Today and inbox is zero. Capture a thought with ⌘K or plan a project to get rolling."
       : todayTasks.length === 0
         ? "Open the inbox and decide where each item goes — do, defer, delegate, or drop."
-        : "Your Today list is below. Work top to bottom; capture anything new with ⌘N.";
+        : "Your Today list is below. Work top to bottom; capture anything new with ⌘K.";
 
   const liveHeadline = briefingHeadline || fallbackHeadline;
   const liveSummary =
@@ -351,7 +351,7 @@ export function TodayView() {
             {taskStatus === "loading" && todayTasks.length === 0 ? (
               <PlaceholderRow label="Loading…" />
             ) : todayTasks.length === 0 ? (
-              <PlaceholderRow label="Nothing on your list yet. Press ⌘N to capture something." />
+              <PlaceholderRow label="Nothing on your list yet. Press ⌘K to capture something." />
             ) : (
               <TaskList tasks={todayTasks} projectsById={projectsById} />
             )}

@@ -3,7 +3,12 @@ import { and, eq, inArray } from "drizzle-orm";
 import { db } from "../db/client";
 import { subtask, task } from "../db/schema";
 import { HTTPError, requireUser, type Env } from "../middleware/session";
-import { CreateTaskInputSchema, TasksQuerySchema, UpdateTaskInputSchema } from "../../shared/types";
+import {
+  CreateSubtaskInputSchema,
+  CreateTaskInputSchema,
+  TasksQuerySchema,
+  UpdateTaskInputSchema,
+} from "../../shared/types";
 
 const router = new Hono<Env>();
 
@@ -27,6 +32,8 @@ router.get("/tasks", async (c) => {
       due: task.due,
       dueText: task.dueText,
       projectId: task.projectId,
+      releaseId: task.releaseId,
+      clientDescription: task.clientDescription,
       integration: task.integration,
       integrationId: task.integrationId,
       createdAt: task.createdAt,
@@ -69,7 +76,7 @@ router.post("/tasks", async (c) => {
   const body = (await c.req.json().catch(() => null)) as unknown;
   const parsed = CreateTaskInputSchema.safeParse(body);
   if (!parsed.success) throw new HTTPError(400, "Invalid task input");
-  const { title, status, priority, projectId, notes } = parsed.data;
+  const { title, status, priority, projectId, releaseId, notes, clientDescription } = parsed.data;
 
   const [created] = await db
     .insert(task)
@@ -79,7 +86,9 @@ router.post("/tasks", async (c) => {
       status: status ?? "today",
       priority: priority ?? "P3",
       projectId: projectId ?? null,
+      releaseId: releaseId ?? null,
       notes: notes ?? "",
+      clientDescription: clientDescription ?? "",
     })
     .returning({
       id: task.id,
@@ -90,6 +99,8 @@ router.post("/tasks", async (c) => {
       due: task.due,
       dueText: task.dueText,
       projectId: task.projectId,
+      releaseId: task.releaseId,
+      clientDescription: task.clientDescription,
       integration: task.integration,
       integrationId: task.integrationId,
       createdAt: task.createdAt,
@@ -127,6 +138,8 @@ router.patch("/tasks/:id", async (c) => {
       due: task.due,
       dueText: task.dueText,
       projectId: task.projectId,
+      releaseId: task.releaseId,
+      clientDescription: task.clientDescription,
       integration: task.integration,
       integrationId: task.integrationId,
       createdAt: task.createdAt,
@@ -135,6 +148,39 @@ router.patch("/tasks/:id", async (c) => {
   if (rows.length === 0) throw new HTTPError(404, "Task not found");
 
   return c.json({ task: { ...rows[0], subtasks: [] as unknown[] } });
+});
+
+router.post("/tasks/:taskId/subtasks", async (c) => {
+  const user = requireUser(c);
+  const taskId = c.req.param("taskId");
+  const body = (await c.req.json().catch(() => null)) as unknown;
+  const parsed = CreateSubtaskInputSchema.safeParse(body);
+  if (!parsed.success) throw new HTTPError(400, "Invalid subtask input");
+
+  // Confirm the task belongs to this user before adding a subtask.
+  const [parent] = await db
+    .select({ id: task.id })
+    .from(task)
+    .where(and(eq(task.id, taskId), eq(task.userId, user.id)))
+    .limit(1);
+  if (!parent) throw new HTTPError(404, "Task not found");
+
+  const [created] = await db
+    .insert(subtask)
+    .values({ taskId, title: parsed.data.title.trim() })
+    .returning({
+      id: subtask.id,
+      taskId: subtask.taskId,
+      title: subtask.title,
+      done: subtask.done,
+      createdAt: subtask.createdAt,
+      updatedAt: subtask.updatedAt,
+    });
+
+  // Bump the parent task's updatedAt so detail-view "Updated" reflects the change.
+  await db.update(task).set({ updatedAt: new Date() }).where(eq(task.id, taskId));
+
+  return c.json({ subtask: created });
 });
 
 router.delete("/tasks/:id", async (c) => {

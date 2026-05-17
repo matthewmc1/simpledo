@@ -1,4 +1,12 @@
-import type { CreateTaskInput, Status, Subtask, Task, UpdateSubtaskInput, UpdateTaskInput } from "@shared/types";
+import type {
+  CreateSubtaskInput,
+  CreateTaskInput,
+  Status,
+  Subtask,
+  Task,
+  UpdateSubtaskInput,
+  UpdateTaskInput,
+} from "@shared/types";
 import { apiGet, apiRequest } from "./http";
 
 export async function fetchTasks(status?: Status): Promise<Task[]> {
@@ -24,4 +32,17 @@ export async function deleteTask(id: string): Promise<void> {
 export async function patchSubtask(id: string, input: UpdateSubtaskInput): Promise<Subtask> {
   const data = await apiRequest<{ subtask: Subtask }>("PATCH", `/api/subtasks/${id}`, input);
   return data.subtask;
+}
+
+export async function createSubtask(taskId: string, input: CreateSubtaskInput): Promise<Subtask> {
+  const data = await apiRequest<{ subtask: Subtask }>(
+    "POST",
+    `/api/tasks/${taskId}/subtasks`,
+    input,
+  );
+  return data.subtask;
+}
+
+export async function deleteSubtask(id: string): Promise<void> {
+  await apiRequest<{ ok: true }>("DELETE", `/api/subtasks/${id}`);
 }

@@ -11,16 +11,17 @@ import { TweaksProvider } from "./tweaks/TweaksProvider";
 import { TodayView } from "./views/TodayView";
 import { InboxView } from "./views/InboxView";
 import { ProjectView } from "./views/ProjectView";
+import { NextView, SomedayView, WaitingView } from "./views/StatusListView";
 import { TaskDetailView } from "./views/TaskDetailView";
 import { WeekView } from "./views/WeekView";
 import { WeeklyReviewView } from "./views/WeeklyReviewView";
 
 function AuthedApp() {
   const setCaptureOpen = useCaptureModal((s) => s.setOpen);
-  // ⌘N / Ctrl+N opens the capture modal. preventDefault is best-effort —
-  // Chrome on Mac occasionally still handles ⌘N as "new window".
+  // ⌘K / Ctrl+K opens the capture modal. We avoid ⌘N because Chrome and
+  // Safari both swallow that for "new window" before JS can preventDefault.
   useHotkeys(
-    "mod+n",
+    "mod+k",
     (e) => {
       e.preventDefault();
       setCaptureOpen(true);
@@ -33,6 +34,9 @@ function AuthedApp() {
       <Routes>
         <Route path="/" element={<TodayView />} />
         <Route path="/inbox" element={<InboxView />} />
+        <Route path="/next" element={<NextView />} />
+        <Route path="/waiting" element={<WaitingView />} />
+        <Route path="/someday" element={<SomedayView />} />
         <Route path="/project/:id" element={<ProjectView />} />
         <Route path="/task/:id" element={<TaskDetailView />} />
         <Route path="/calendar" element={<WeekView />} />

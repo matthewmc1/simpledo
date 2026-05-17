@@ -65,6 +65,17 @@ export const project = pgTable("project", {
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
 });
 
+export const release = pgTable("release", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  projectId: uuid("project_id").notNull().references(() => project.id, { onDelete: "cascade" }),
+  version: text("version").notNull(), // MAJOR.MINOR.PATCH
+  name: text("name"), // optional codename
+  notes: text("notes").notNull().default(""),
+  releasedAt: timestamp("released_at", { withTimezone: true }), // null = planned
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
 export const task = pgTable("task", {
   id: uuid("id").primaryKey().defaultRandom(),
   userId: text("user_id").notNull().references(() => user.id, { onDelete: "cascade" }),
@@ -75,6 +86,9 @@ export const task = pgTable("task", {
   due: timestamp("due", { withTimezone: true }),
   dueText: text("due_text"),
   projectId: uuid("project_id").references(() => project.id, { onDelete: "set null" }),
+  releaseId: uuid("release_id").references(() => release.id, { onDelete: "set null" }),
+  // Client-facing one-line summary used in changelogs. Falls back to title if blank.
+  clientDescription: text("client_description").notNull().default(""),
   integration: text("integration"),
   integrationId: text("integration_id"),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
@@ -102,6 +116,7 @@ export const inboxItem = pgTable("inbox_item", {
 
 export type User = typeof user.$inferSelect;
 export type Project = typeof project.$inferSelect;
+export type Release = typeof release.$inferSelect;
 export type Task = typeof task.$inferSelect;
 export type Subtask = typeof subtask.$inferSelect;
 export type InboxItem = typeof inboxItem.$inferSelect;
