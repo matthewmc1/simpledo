@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import type { Project, Task } from "@shared/types";
 import { deleteTask, patchTask as apiPatchTask } from "../api/tasks";
@@ -9,6 +9,7 @@ import { btnGhost, btnPrimary } from "../components/briefing/buttons";
 import { Checkbox } from "../components/Checkbox";
 import { useCaptureModal } from "../stores/captureStore";
 import { useEnsureProjectsLoaded, useProjectStore } from "../stores/projectStore";
+import { useReviewStore } from "../stores/reviewStore";
 import { useEnsureTasksLoaded, useTaskStore } from "../stores/taskStore";
 import { useTweaks } from "../tweaks/TweaksProvider";
 
@@ -87,7 +88,24 @@ export function WeeklyReviewView() {
   const projectStatus = useProjectStore((s) => s.status);
   const setCaptureOpen = useCaptureModal((s) => s.setOpen);
 
+  // Streaming AI review (recap + focus for next week). Only kick off the
+  // generation once we have at least one task or project worth summarising
+  // — saves a useless Ollama call for brand-new users.
+  const reviewStatus = useReviewStore((s) => s.status);
+  const reviewRecap = useReviewStore((s) => s.recap);
+  const reviewFocus = useReviewStore((s) => s.focus);
+  const reviewError = useReviewStore((s) => s.error);
+  const regenerateReview = useReviewStore((s) => s.generate);
+
   const loaded = taskStatus === "ready" && projectStatus === "ready";
+  const hasAnyData = tasks.length > 0 || projects.length > 0;
+
+  // Fire the AI review once data has loaded AND there's something to summarise.
+  useEffect(() => {
+    if (loaded && hasAnyData && reviewStatus === "idle") {
+      void regenerateReview();
+    }
+  }, [loaded, hasAnyData, reviewStatus, regenerateReview]);
 
   const projectsById = useMemo(() => {
     const m = new Map<string, Project>();
@@ -221,41 +239,14 @@ export function WeeklyReviewView() {
             <FirstRunGuide onCapture={() => setCaptureOpen(true)} />
           ) : (
             <>
-              {showGemma && wins.length > 0 && (
-                <section
-                  style={{
-                    padding: "22px 26px",
-                    background: "color-mix(in oklch, var(--accent) 6%, var(--paper))",
-                    border: "1px solid color-mix(in oklch, var(--accent) 22%, transparent)",
-                    borderRadius: 4,
-                    marginBottom: 32,
-                  }}
-                >
-                  <div
-                    style={{
-                      fontFamily: "var(--mono)",
-                      fontSize: 10,
-                      letterSpacing: "0.1em",
-                      textTransform: "uppercase",
-                      color: "var(--accent)",
-                      marginBottom: 8,
-                    }}
-                  >
-                    ✦ Gemma's read of the week
-                  </div>
-                  <p
-                    style={{
-                      fontFamily: "var(--serif)",
-                      fontStyle: "italic",
-                      fontSize: 17,
-                      lineHeight: 1.45,
-                      margin: 0,
-                      color: "var(--ink)",
-                    }}
-                  >
-                    {gemmaReadout(wins.length, stale.length, projectHealth)}
-                  </p>
-                </section>
+              {showGemma && (
+                <AiReviewBanner
+                  status={reviewStatus}
+                  recap={reviewRecap}
+                  focus={reviewFocus}
+                  error={reviewError}
+                  onRegenerate={() => void regenerateReview()}
+                />
               )}
 
               <section style={{ marginBottom: 32 }}>
@@ -566,7 +557,7 @@ export function WeeklyReviewView() {
                   cursor: "pointer",
                 }}
               >
-                ⌘N · Mind sweep
+                ⌘K · Mind sweep
               </button>
             </div>
           </div>
@@ -576,18 +567,206 @@ export function WeeklyReviewView() {
   );
 }
 
-function gemmaReadout(winCount: number, staleCount: number, projects: ProjectHealth[]): string {
-  const parts: string[] = [];
-  if (winCount === 0) parts.push("Quiet week — no completed tasks landed.");
-  else if (winCount === 1) parts.push("One thing crossed off this week.");
-  else parts.push(`${winCount} wins this week.`);
+interface BannerProps {
+  status: "idle" | "streaming" | "ready" | "error";
+  recap: string;
+  focus: string;
+  error: string | null;
+  onRegenerate: () => void;
+}
 
-  const blocked = projects.filter((p) => p.health === "blocked");
-  const stale = projects.filter((p) => p.health === "stale");
-  if (blocked.length > 0) parts.push(`${blocked[0].project.name} looks blocked.`);
-  if (stale.length > 0) parts.push(`${stale[0].project.name} hasn't moved in two weeks.`);
-  if (staleCount > 0) parts.push(`${staleCount} item${staleCount === 1 ? "" : "s"} need a decision below.`);
-  return `"${parts.join(" ")}"`;
+function weekEndingLabel(): string {
+  return new Date().toLocaleDateString(undefined, {
+    weekday: "short",
+    month: "short",
+    day: "numeric",
+    year: "numeric",
+  });
+}
+
+function buildMarkdown(recap: string, focus: string): string {
+  const heading = `# Weekly review — ${weekEndingLabel()}`;
+  const parts = [heading];
+  if (recap) parts.push(`## Recap\n\n${recap}`);
+  if (focus) parts.push(`## Focus for next week\n\n${focus}`);
+  return parts.join("\n\n") + "\n";
+}
+
+function AiReviewBanner({ status, recap, focus, error, onRegenerate }: BannerProps) {
+  const streaming = status === "streaming";
+  const errored = status === "error";
+  const idle = status === "idle";
+
+  // Don't render an empty placeholder card before the first generation kicks off.
+  if (idle && !recap && !focus) return null;
+
+  const [copyState, setCopyState] = useState<"idle" | "copied" | "failed">("idle");
+  const canCopy = !streaming && (recap.length > 0 || focus.length > 0);
+  const onCopy = async () => {
+    try {
+      await navigator.clipboard.writeText(buildMarkdown(recap, focus));
+      setCopyState("copied");
+      window.setTimeout(() => setCopyState("idle"), 1600);
+    } catch (e) {
+      console.error("Clipboard copy failed:", e);
+      setCopyState("failed");
+      window.setTimeout(() => setCopyState("idle"), 1600);
+    }
+  };
+
+  return (
+    <section
+      style={{
+        padding: "22px 26px",
+        background: "color-mix(in oklch, var(--accent) 6%, var(--paper))",
+        border: "1px solid color-mix(in oklch, var(--accent) 22%, transparent)",
+        borderRadius: 4,
+        marginBottom: 32,
+      }}
+    >
+      <div
+        style={{
+          display: "flex",
+          justifyContent: "space-between",
+          alignItems: "center",
+          marginBottom: 12,
+          gap: 12,
+        }}
+      >
+        <div
+          style={{
+            display: "flex",
+            alignItems: "center",
+            gap: 8,
+            fontFamily: "var(--mono)",
+            fontSize: 10,
+            letterSpacing: "0.1em",
+            textTransform: "uppercase",
+            color: errored ? "var(--muted)" : "var(--accent)",
+            minWidth: 0,
+          }}
+        >
+          <span
+            style={{
+              width: 5,
+              height: 5,
+              borderRadius: "50%",
+              background: errored ? "var(--muted)" : "var(--accent)",
+              animation: streaming ? "pulse 1.4s infinite" : "none",
+              flexShrink: 0,
+            }}
+          />
+          <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+            {errored
+              ? "Gemma offline"
+              : streaming
+                ? "Drafting your weekly review…"
+                : `Week ending ${weekEndingLabel()}`}
+          </span>
+        </div>
+        <div style={{ display: "flex", gap: 6, flexShrink: 0 }}>
+          <button
+            type="button"
+            onClick={onCopy}
+            disabled={!canCopy}
+            style={{
+              background: copyState === "copied" ? "var(--accent)" : "transparent",
+              border: "1px solid color-mix(in oklch, var(--accent) 30%, transparent)",
+              color: copyState === "copied" ? "var(--paper)" : "var(--accent)",
+              padding: "4px 10px",
+              borderRadius: 3,
+              fontFamily: "var(--mono)",
+              fontSize: 10,
+              letterSpacing: "0.06em",
+              textTransform: "uppercase",
+              cursor: canCopy ? "pointer" : "default",
+              opacity: canCopy ? 1 : 0.4,
+              transition: "background 120ms ease-out",
+            }}
+            title="Copy as Markdown — paste into your status update or write-up."
+          >
+            {copyState === "copied"
+              ? "✓ Copied"
+              : copyState === "failed"
+                ? "Copy failed"
+                : "Copy as Markdown"}
+          </button>
+          <button
+            type="button"
+            onClick={onRegenerate}
+            disabled={streaming}
+            style={{
+              background: "transparent",
+              border: "1px solid color-mix(in oklch, var(--accent) 30%, transparent)",
+              color: "var(--accent)",
+              padding: "4px 10px",
+              borderRadius: 3,
+              fontFamily: "var(--mono)",
+              fontSize: 10,
+              letterSpacing: "0.06em",
+              textTransform: "uppercase",
+              cursor: streaming ? "default" : "pointer",
+              opacity: streaming ? 0.5 : 1,
+            }}
+          >
+            {streaming ? "Drafting…" : "Regenerate"}
+          </button>
+        </div>
+      </div>
+
+      <div
+        style={{
+          fontFamily: "var(--mono)",
+          fontSize: 9,
+          letterSpacing: "0.1em",
+          textTransform: "uppercase",
+          color: "var(--muted)",
+          marginBottom: 4,
+        }}
+      >
+        Recap
+      </div>
+      <p
+        style={{
+          fontFamily: "var(--serif)",
+          fontStyle: "italic",
+          fontSize: 17,
+          lineHeight: 1.5,
+          margin: "0 0 18px",
+          color: "var(--ink)",
+          minHeight: 24,
+        }}
+      >
+        {recap || (streaming ? "" : errored ? error || "Could not reach Gemma." : "")}
+      </p>
+
+      <div
+        style={{
+          fontFamily: "var(--mono)",
+          fontSize: 9,
+          letterSpacing: "0.1em",
+          textTransform: "uppercase",
+          color: "var(--muted)",
+          marginBottom: 4,
+        }}
+      >
+        Focus for next week
+      </div>
+      <p
+        style={{
+          fontFamily: "var(--serif)",
+          fontStyle: "italic",
+          fontSize: 17,
+          lineHeight: 1.5,
+          margin: 0,
+          color: "var(--ink)",
+          minHeight: 24,
+        }}
+      >
+        {focus || (streaming ? "" : "")}
+      </p>
+    </section>
+  );
 }
 
 function EmptyHint({ text }: { text: string }) {
@@ -639,7 +818,7 @@ function FirstRunGuide({ onCapture }: { onCapture: () => void }) {
           {
             n: 1,
             title: "Capture what's on your mind",
-            body: "Press ⌘N anywhere to dump a thought into the inbox. Don't think — just write.",
+            body: "Press ⌘K anywhere to dump a thought into the inbox. Don't think — just write.",
           },
           {
             n: 2,

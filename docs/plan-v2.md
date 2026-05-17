@@ -120,3 +120,87 @@ docs/
 End of each phase: server smoke (curl), client smoke (Playwright covering the key flows), `npm run typecheck`, `npm run build`. Documented in this plan file as each phase closes.
 
 Ready to start v2-1.
+
+---
+
+## v3 backlog (queued, not started)
+
+### v3-1 · Calendar view ✅ Done 2026-05-17
+
+- **`WeekView` rewrite** — replaced fixture timeline with live data from `useTaskStore`. Tasks with a `due` date land in their day cell, grouped by day. Today's cell gets a copper tint and "Today" tag.
+- **Across-the-board view** — header `Day / Week` toggle. Week renders Mon–Sun (7 columns); Day collapses to a single-column view of the anchor day. `←` / `Today` / `→` step the anchor by 7 days (week mode) or 1 day (day mode).
+- **Gemma recommendations overlay** — new `POST /api/calendar/recommend?from=…&to=…` streams narrative planning recommendations in the same NDJSON / RECOMMEND: format as `/review`. New `calendarRecommendStore` consumes the stream and surfaces it as a banner above the grid. Banner regenerates when the visible range changes (cheap dedupe via `lastKey`). Honours the `aiProminence === "quiet"` tweak.
+- **Click-through** — every chip in the grid + every unscheduled tile is a `<Link/>` to `/task/:id`. Drag-to-reschedule still out of scope.
+- **Unscheduled rail** — `today/next/waiting` tasks without a due date appear as dashed pills below the grid, sorted by priority then recency. Empty state: "Everything has a date — nothing waiting in the wings."
+
+Did not ship: per-cell `{day, hourStart, taskId, reason}` recommendations (defer to v3-1.x — needs a time-of-day on tasks first; current DatePicker only stores dates).
+
+DoD verified: set a task's due date via TaskDetail → opened Calendar → task appears on the correct day; banner returned a narrative referencing the real task by name.
+
+### v3-2 · Project rollouts / release timelines ✅ Done 2026-05-17
+
+Per-project timeline view that surfaces shipped/upcoming releases under semantic versioning, with auto-generated changelogs.
+
+- **Schema additions**:
+  - `release` table — `id`, `project_id` FK, `version` (string, validated as `MAJOR.MINOR.PATCH`), `name` (optional), `released_at` (nullable; null = planned), `notes` (optional client-facing description), `created_at`, `updated_at`.
+  - `task` table gains a `release_id` FK (nullable, `ON DELETE SET NULL`) and a `client_description` text column (the client-facing copy used in release notes; falls back to task title if blank).
+- **ProjectView additions**:
+  - **Timeline panel** — horizontal milestone strip listing every release for this project in version order, with status dots (planned/in-progress/released). Click a release to expand.
+  - **Per-release card** — shows `MAJOR.MINOR.PATCH`, optional codename, release date, narrative notes, and the list of tasks tagged to that release (grouped by Major→Minor→Patch lineage).
+- **Changelog generation**:
+  - `GET /api/projects/:id/releases/:version/changelog` — server compiles markdown from each task's `client_description` (or title), grouped by type if we add that later, ready to copy or download.
+  - Client surfaces a **Copy as Markdown** button mirroring the Weekly Review pattern.
+- **Semver enforcement** — Zod schema validates `MAJOR.MINOR.PATCH`; UI disallows reordering versions or creating duplicates.
+- **Cheap LLM polish** (optional second pass) — same provider abstraction can rewrite the changelog to a customer-friendly paragraph if requested per-release.
+
+DoD: I can create a project, define versions `0.1.0`, `0.2.0`, `1.0.0`, drag tasks (or pick from a dropdown) into each release, mark a release as "released" with a date, and copy a clean markdown changelog that uses each ticket's client-facing description. Older releases stay in the timeline forever.
+
+Shipped:
+
+- **Schema**: `release` table (`id`, `project_id`, `version`, `name`, `notes`, `released_at`, `created_at`, `updated_at`) with FK to `project ON DELETE CASCADE`. `task.release_id` FK with `ON DELETE SET NULL` and `task.client_description text NOT NULL DEFAULT ''`.
+- **Server**: `GET/POST /api/projects/:projectId/releases`, `PATCH/DELETE /api/releases/:id`, `GET /api/releases/:id/changelog` (JSON + `?format=md` text). Semver validated in Zod (`/^\d+\.\d+\.\d+$/`); duplicates across the same project return `409`. Ownership enforced via project join.
+- **Client store**: `useReleaseStore` lazy-loads per-projectId, sorts semver-ascending, optimistic mutations with rollback.
+- **`<ReleaseTimeline/>`**: horizontal scrolling strip with status dots (`released` green, `in-progress` copper, `planned` muted). Click a "station" to expand a per-release card with editable narrative notes, **Copy changelog** button, Mark released / Mark planned toggle, Delete.
+- **Create release modal**: validates semver client-side, rejects duplicates, optional codename + notes + "Mark as released today" checkbox.
+- **Task detail**: new **Client-facing description** block under Notes; new **Release** picker in the sidebar (only shown when the task has a project; lists releases for that project). Changing project clears the release association so we don't end up with cross-project links.
+- **Changelog markdown**: heading `# version — codename` + release date + narrative notes + bulleted list using each task's `client_description` (or `title` fallback). One-click clipboard copy from the release card.
+
+DoD verified: created project, made `0.1.0` (with notes), tagged two tasks each with a client description, marked it released, copied the markdown — got `# 0.1.0 — first stab` plus `## What's new` bullets exactly as expected. Duplicate-version + bad-semver paths return `409` / `400`.
+
+---
+
+### v3-3 · Google Calendar (read-only) ✅ Done 2026-05-17
+
+Pull read-only Google Calendar events into the Week view alongside tasks. Email/demo users see a Connect-Google CTA; Google users with old scopes see a Reconnect CTA.
+
+Shipped:
+
+- **Auth scopes** — `server/auth.ts` adds `calendar.readonly` + `calendar.events.readonly` to the Google provider, with `accessType: "offline"` + `prompt: "consent"` so we always receive a refresh token.
+- **Token refresh** — `server/integrations/google.ts` reads the user's `account` row, refreshes the access_token via `oauth2.googleapis.com/token` when within 60s of expiry, persists the new token + expiry. `invalid_grant` from Google surfaces as `code: "needs_reconsent"` for the UI to handle.
+- **Endpoints** (all under `requireUser`):
+  - `GET /api/google/status` → `{ connected, calendarScopeGranted, code? }` (412-less probe — the status endpoint always returns 200 so the UI can decide what to show).
+  - `GET /api/google/calendars` → user's calendars (primary first, sorted by name otherwise).
+  - `GET /api/google/events?from=ISO&to=ISO&calendarIds=` → normalized events for one or more calendars; defaults to `primary`. Per-calendar fetch failures are logged and skipped rather than failing the whole request.
+- **Client** — `src/api/google.ts` thin fetch helpers + `src/stores/googleCalendarStore.ts` (status + events with range-key dedupe).
+- **WeekView**:
+  - Real Google events render in their day column as **ink-filled chips** (distinct from project-coloured task chips) with time prefix, "Calendar" eyebrow, and a click-out to the event's `htmlLink`.
+  - Banner above the grid: green dot + "Google Calendar · N events this range" when connected; accent banner with "Connect Google" / "Reconnect Google" CTA when scope is missing.
+  - Demo accounts see a separate "demo accounts can't link Google Calendar" notice.
+  - Email-only users see the same Connect-Google CTA; clicking re-runs `signInGoogle()` (Better Auth will link the account if the email matches).
+- **Setup docs** — `docs/setup.md` updated with the consent-screen scope list, Calendar API enablement, and the "sign out/back in" note for existing users.
+
+Out of scope (defer to v3-3.x):
+- Calendar write (create/move events).
+- Multi-calendar selection UI (currently always `primary` — the API supports the param already, UI not built).
+- Settings/integrations page to manage connections (rely on the in-place banner for now).
+
+DoD verified: hit `/api/google/status` as an email-only user → `{connected:false, code:"not_connected"}`; same endpoint with a Google user not yet granted Calendar → `{connected:true, calendarScopeGranted:false, code:"needs_reconsent"}`. UI banners render the right CTA in each state.
+
+---
+
+## v2 closing notes — Weekly review AI snippet (2026-05-17)
+
+- `POST /api/review` streams a narrative recap + focus paragraphs from Ollama (same provider seam as `/api/briefing`).
+- Banner on `WeeklyReviewView` shows both sections in italic serif for the "paste into a write-up" use case.
+- **Copy as Markdown** button on the banner outputs `# Weekly review — <date>` heading + `## Recap` + `## Focus for next week` sections.
+- Prompt rewritten to produce first-person-plural narrative suitable for a status update or performance review.

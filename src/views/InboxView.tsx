@@ -219,7 +219,7 @@ export function InboxView() {
               textAlign: "center",
             }}
           >
-            Inbox zero. Press ⌘N to capture something.
+            Inbox zero. Press ⌘K to capture something.
           </div>
         ) : (
         <ul

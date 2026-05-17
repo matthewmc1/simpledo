@@ -75,10 +75,10 @@ export function TodayView() {
   const fallbackSummary = !briefingReady
     ? ""
     : todayTasks.length === 0 && inboxItems.length === 0
-      ? "Nothing in Today and inbox is zero. Capture a thought with ⌘N or plan a project to get rolling."
+      ? "Nothing in Today and inbox is zero. Capture a thought with ⌘K or plan a project to get rolling."
       : todayTasks.length === 0
         ? "Open the inbox and decide where each item goes — do, defer, delegate, or drop."
-        : "Your Today list is below. Work top to bottom; capture anything new with ⌘N.";
+        : "Your Today list is below. Work top to bottom; capture anything new with ⌘K.";
 
   const liveHeadline = briefingHeadline || fallbackHeadline;
   const liveSummary =
@@ -177,23 +177,6 @@ export function TodayView() {
             >
               Weekly review
             </Link>
-            <div
-              style={{
-                width: 32,
-                height: 32,
-                borderRadius: "50%",
-                background: "var(--accent)",
-                color: "var(--paper)",
-                display: "flex",
-                alignItems: "center",
-                justifyContent: "center",
-                fontFamily: "var(--serif)",
-                fontWeight: 500,
-                fontSize: 13,
-              }}
-            >
-              {userInitials(sessionState.status === "authenticated" ? sessionState.user.name : firstName)}
-            </div>
           </div>
         </header>
 
@@ -351,7 +334,7 @@ export function TodayView() {
             {taskStatus === "loading" && todayTasks.length === 0 ? (
               <PlaceholderRow label="Loading…" />
             ) : todayTasks.length === 0 ? (
-              <PlaceholderRow label="Nothing on your list yet. Press ⌘N to capture something." />
+              <PlaceholderRow label="Nothing on your list yet. Press ⌘K to capture something." />
             ) : (
               <TaskList tasks={todayTasks} projectsById={projectsById} />
             )}
@@ -717,13 +700,6 @@ function InboxRow({ item, divider }: { item: InboxItem; divider: boolean }) {
       </div>
     </li>
   );
-}
-
-function userInitials(name: string): string {
-  const parts = name.trim().split(/\s+/).filter(Boolean);
-  if (parts.length === 0) return "?";
-  if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase();
-  return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase();
 }
 
 function greeting(): string {

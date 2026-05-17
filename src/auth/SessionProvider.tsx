@@ -8,8 +8,12 @@ import {
   type ReactNode,
 } from "react";
 import { useBriefingStore } from "../stores/briefingStore";
+import { useCalendarRecommendStore } from "../stores/calendarRecommendStore";
+import { useGoogleCalendarStore } from "../stores/googleCalendarStore";
 import { useInboxStore } from "../stores/inboxStore";
 import { useProjectStore } from "../stores/projectStore";
+import { useReleaseStore } from "../stores/releaseStore";
+import { useReviewStore } from "../stores/reviewStore";
 import { useTaskStore } from "../stores/taskStore";
 import { fetchMe, signOut as apiSignOut, type ClientUser } from "./api";
 
@@ -41,6 +45,10 @@ export function SessionProvider({ children }: { children: ReactNode }) {
     useProjectStore.getState().reset();
     useInboxStore.getState().reset();
     useBriefingStore.getState().reset();
+    useReviewStore.getState().reset();
+    useCalendarRecommendStore.getState().reset();
+    useReleaseStore.getState().reset();
+    useGoogleCalendarStore.getState().reset();
     setState({ status: "anonymous", user: null });
   }, []);
 

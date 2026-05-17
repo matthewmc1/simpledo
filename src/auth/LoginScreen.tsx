@@ -41,7 +41,10 @@ export function LoginScreen() {
     if (busy) return;
     setBusy("google");
     setError(null);
-    signInGoogle();
+    void signInGoogle().catch((e) => {
+      setBusy(null);
+      setError(e instanceof Error ? e.message : String(e));
+    });
   };
 
   return (

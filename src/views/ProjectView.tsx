@@ -7,6 +7,7 @@ import { ViewHeader } from "../components/briefing/ViewHeader";
 import { btnGhost, btnPrimary } from "../components/briefing/buttons";
 import { Checkbox } from "../components/Checkbox";
 import { PriorityMark } from "../components/PriorityMark";
+import { ReleaseTimeline } from "../components/ReleaseTimeline";
 import { SourceIcon } from "../components/SourceIcon";
 import { useProjectCreateModal } from "../stores/projectModalStore";
 import {
@@ -329,6 +330,8 @@ export function ProjectView() {
               </div>
             </div>
           </section>
+
+          <ReleaseTimeline projectId={project.id} />
 
           {quickAddOpen && (
             <div

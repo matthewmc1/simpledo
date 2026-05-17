@@ -4,9 +4,11 @@ import { cors } from "hono/cors";
 import { env } from "./env";
 import { authRoutes } from "./routes/auth";
 import { briefingRoutes } from "./routes/briefing";
+import { googleRoutes } from "./routes/google";
 import { inboxRoutes } from "./routes/inbox";
 import { meRoutes } from "./routes/me";
 import { projectRoutes } from "./routes/projects";
+import { releaseRoutes } from "./routes/releases";
 import { subtaskRoutes } from "./routes/subtasks";
 import { taskRoutes } from "./routes/tasks";
 import { HTTPError, resolveSession, type Env } from "./middleware/session";
@@ -26,10 +28,12 @@ app.use("*", resolveSession);
 app.route("/api", authRoutes);
 app.route("/api", meRoutes);
 app.route("/api", projectRoutes);
+app.route("/api", releaseRoutes);
 app.route("/api", taskRoutes);
 app.route("/api", subtaskRoutes);
 app.route("/api", inboxRoutes);
 app.route("/api", briefingRoutes);
+app.route("/api", googleRoutes);
 
 app.onError((err, c) => {
   if (err instanceof HTTPError) {
