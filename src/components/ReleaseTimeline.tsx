@@ -7,7 +7,7 @@ import {
   useEnsureReleasesLoaded,
   useReleaseStore,
 } from "../stores/releaseStore";
-import { useEnsureTasksLoaded, useTaskStore } from "../stores/taskStore";
+import { useEnsureProjectTasksLoaded, useTaskStore } from "../stores/taskStore";
 import { btnGhost, btnPrimary } from "./briefing/buttons";
 import { SectionLabel } from "./briefing/SectionLabel";
 
@@ -19,7 +19,10 @@ interface Props {
 
 export function ReleaseTimeline({ projectId }: Props) {
   useEnsureReleasesLoaded(projectId);
-  useEnsureTasksLoaded();
+  // Release timeline shares the project's task slice — ProjectView already
+  // ensured this on mount, but call here so the component is self-contained
+  // (the loader is idempotent / dedup'd by slice key).
+  useEnsureProjectTasksLoaded(projectId);
 
   const releases =
     useReleaseStore((s) => s.byProject.get(projectId)) ?? EMPTY_RELEASES;

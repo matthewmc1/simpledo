@@ -142,10 +142,26 @@ export type UpdateProjectInput = z.infer<typeof UpdateProjectInputSchema>;
 
 // ── Query / input schemas ─────────────────────────────────────────────────
 
+/** Pagination + filter query for GET /api/tasks. Defaults are conservative
+ *  so unbounded clients can't accidentally pull millions of rows. */
 export const TasksQuerySchema = z.object({
   status: StatusSchema.optional(),
+  projectId: z.string().uuid().nullable().optional(),
+  releaseId: z.string().uuid().nullable().optional(),
+  /** ISO timestamps bracketing the `due` column. Used by the calendar. */
+  dueFrom: z.string().datetime().optional(),
+  dueTo: z.string().datetime().optional(),
+  /** Page size (server caps it). */
+  limit: z.coerce.number().int().min(1).max(500).optional(),
+  /** Cursor = ISO timestamp of the last `created_at` seen, descending. */
+  cursor: z.string().datetime().optional(),
 });
 export type TasksQuery = z.infer<typeof TasksQuerySchema>;
+
+export const TasksPaginatedResponseSchema = z.object({
+  tasks: z.array(TaskSchema),
+  nextCursor: z.string().nullable(),
+});
 
 export const UpdateTaskInputSchema = z
   .object({

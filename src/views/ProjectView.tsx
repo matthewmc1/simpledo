@@ -15,7 +15,7 @@ import {
   useProjectStore,
 } from "../stores/projectStore";
 import {
-  useEnsureTasksLoaded,
+  useEnsureProjectTasksLoaded,
   useTaskStore,
 } from "../stores/taskStore";
 
@@ -26,8 +26,8 @@ const WEEK_MS = 7 * 24 * 60 * 60 * 1000;
 
 export function ProjectView() {
   useEnsureProjectsLoaded();
-  useEnsureTasksLoaded();
   const { id } = useParams<{ id: string }>();
+  useEnsureProjectTasksLoaded(id);
   const navigate = useNavigate();
   const openCreate = useProjectCreateModal((s) => s.setOpen);
 

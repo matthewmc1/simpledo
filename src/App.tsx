@@ -4,9 +4,11 @@ import { BrowserRouter, Route, Routes } from "react-router-dom";
 import { LoginScreen } from "./auth/LoginScreen";
 import { SessionProvider, useSession } from "./auth/SessionProvider";
 import { CaptureModal } from "./components/CaptureModal";
+import { CommandPalette } from "./components/CommandPalette";
 import { ErrorToasts } from "./components/ErrorToasts";
 import { ProjectCreateModal } from "./components/ProjectCreateModal";
 import { useCaptureModal } from "./stores/captureStore";
+import { useIdleHydration } from "./stores/idleHydration";
 import { TweaksPanel } from "./tweaks/TweaksPanel";
 import { TweaksProvider } from "./tweaks/TweaksProvider";
 // TodayView is the home route — eager so first paint after login has no
@@ -68,6 +70,9 @@ function Lazy({ children }: { children: ReactNode }) {
 
 function AuthedApp() {
   const setCaptureOpen = useCaptureModal((s) => s.setOpen);
+  // Pre-warm Someday + recent Done in idle time so those routes feel instant
+  // the first time the user visits them. No-op if the browser is busy.
+  useIdleHydration();
   // ⌘K / Ctrl+K opens the capture modal. We avoid ⌘N because Chrome and
   // Safari both swallow that for "new window" before JS can preventDefault.
   useHotkeys(
@@ -95,6 +100,7 @@ function AuthedApp() {
       </Routes>
       <CaptureModal />
       <ProjectCreateModal />
+      <CommandPalette />
     </BrowserRouter>
   );
 }

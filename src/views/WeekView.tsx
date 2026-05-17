@@ -12,7 +12,7 @@ import { useCalendarRecommendStore } from "../stores/calendarRecommendStore";
 import { useCaptureModal } from "../stores/captureStore";
 import { useGoogleCalendarStore } from "../stores/googleCalendarStore";
 import { useEnsureProjectsLoaded, useProjectStore } from "../stores/projectStore";
-import { useEnsureTasksLoaded, useTaskStore } from "../stores/taskStore";
+import { useEnsureCalendarRangeLoaded, useTaskStore } from "../stores/taskStore";
 import { useTweaks } from "../tweaks/TweaksProvider";
 
 const WEEKDAY_SHORT = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
@@ -69,7 +69,6 @@ interface CalendarTask extends Task {
 }
 
 export function WeekView() {
-  useEnsureTasksLoaded();
   useEnsureProjectsLoaded();
 
   const { tweaks } = useTweaks();
@@ -92,6 +91,13 @@ export function WeekView() {
 
   const rangeFrom = visibleDays[0];
   const rangeTo = visibleDays[visibleDays.length - 1];
+  // Only load tasks with a `due` in the visible range. The store dedups so
+  // navigating week-by-week incrementally fills the working set without
+  // ever pulling the whole library.
+  useEnsureCalendarRangeLoaded(
+    rangeFrom.toISOString(),
+    addDays(rangeTo, 1).toISOString(),
+  );
 
   const projectsById = useMemo(
     () => new Map<string, Project>(projects.map((p) => [p.id, p])),

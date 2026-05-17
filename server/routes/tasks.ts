@@ -1,5 +1,5 @@
 import { Hono } from "hono";
-import { and, eq, inArray } from "drizzle-orm";
+import { and, desc, eq, gte, inArray, isNull, lt, lte, sql, type SQL } from "drizzle-orm";
 import { db } from "../db/client";
 import { subtask, task } from "../db/schema";
 import { HTTPError, requireUser, type Env } from "../middleware/session";
@@ -12,17 +12,41 @@ import {
 
 const router = new Hono<Env>();
 
+const DEFAULT_LIMIT = 200;
+const MAX_LIMIT = 500;
+
 router.get("/tasks", async (c) => {
   const user = requireUser(c);
-  const parsed = TasksQuerySchema.safeParse({ status: c.req.query("status") });
-  if (!parsed.success) throw new HTTPError(400, "Invalid query: status must be a valid status");
-  const { status } = parsed.data;
+  // Pull every supported query param. Zod normalises types (numbers from
+  // strings, ISO date validation, etc.) and rejects unknowns cleanly.
+  const parsed = TasksQuerySchema.safeParse({
+    status: c.req.query("status"),
+    projectId: c.req.query("projectId"),
+    releaseId: c.req.query("releaseId"),
+    dueFrom: c.req.query("dueFrom"),
+    dueTo: c.req.query("dueTo"),
+    limit: c.req.query("limit"),
+    cursor: c.req.query("cursor"),
+  });
+  if (!parsed.success) throw new HTTPError(400, "Invalid task query");
+  const q = parsed.data;
+  const limit = Math.min(q.limit ?? DEFAULT_LIMIT, MAX_LIMIT);
 
-  const where = status
-    ? and(eq(task.userId, user.id), eq(task.status, status))
-    : eq(task.userId, user.id);
+  // Build the WHERE incrementally. Each filter is index-backed.
+  const conditions: SQL[] = [eq(task.userId, user.id)];
+  if (q.status) conditions.push(eq(task.status, q.status));
+  if (q.projectId === null) conditions.push(isNull(task.projectId));
+  else if (q.projectId) conditions.push(eq(task.projectId, q.projectId));
+  if (q.releaseId === null) conditions.push(isNull(task.releaseId));
+  else if (q.releaseId) conditions.push(eq(task.releaseId, q.releaseId));
+  if (q.dueFrom) conditions.push(gte(task.due, new Date(q.dueFrom)));
+  if (q.dueTo) conditions.push(lte(task.due, new Date(q.dueTo)));
+  // Cursor pagination by createdAt (descending). Stable since we sort newest-first.
+  if (q.cursor) conditions.push(lt(task.createdAt, new Date(q.cursor)));
 
-  const tasks = await db
+  // Fetch one extra row to know whether a next page exists. Drizzle's `.and(...conditions)`
+  // is fine even when the list has a single condition.
+  const rows = await db
     .select({
       id: task.id,
       title: task.title,
@@ -40,11 +64,16 @@ router.get("/tasks", async (c) => {
       updatedAt: task.updatedAt,
     })
     .from(task)
-    .where(where)
-    .orderBy(task.createdAt);
+    .where(and(...conditions))
+    .orderBy(desc(task.createdAt))
+    .limit(limit + 1);
 
-  // One query for all subtasks across the page.
-  const taskIds = tasks.map((t) => t.id);
+  const hasMore = rows.length > limit;
+  const page = hasMore ? rows.slice(0, limit) : rows;
+  const nextCursor = hasMore ? page[page.length - 1].createdAt.toISOString() : null;
+
+  // Subtask fan-out is bounded by `limit` so the IN clause never explodes.
+  const taskIds = page.map((t) => t.id);
   const subtasks = taskIds.length
     ? await db
         .select({
@@ -67,8 +96,36 @@ router.get("/tasks", async (c) => {
     else byTask.set(s.taskId, [s]);
   }
 
-  const result = tasks.map((t) => ({ ...t, subtasks: byTask.get(t.id) ?? [] }));
-  return c.json({ tasks: result });
+  const result = page.map((t) => ({ ...t, subtasks: byTask.get(t.id) ?? [] }));
+  return c.json({ tasks: result, nextCursor });
+});
+
+/** Postgres tsvector full-text search over title + notes + client_description.
+ *  Index is `task_user_search_idx` (GIN on `search_tsv`). Returns a small
+ *  result set ordered by rank — used by the ⌘P palette. */
+router.get("/tasks/search", async (c) => {
+  const user = requireUser(c);
+  const q = (c.req.query("q") ?? "").trim();
+  if (!q) return c.json({ tasks: [] });
+  // `plainto_tsquery` accepts user input verbatim (no special syntax required)
+  // and parameterises through Drizzle's `sql` template — no injection.
+  const tsq = sql`plainto_tsquery('english', ${q})`;
+  const rows = await db
+    .select({
+      id: task.id,
+      title: task.title,
+      status: task.status,
+      priority: task.priority,
+      projectId: task.projectId,
+      dueText: task.dueText,
+      // Rank scores recency-of-match higher than incidental hits.
+      rank: sql<number>`ts_rank(search_tsv, ${tsq})`.mapWith(Number),
+    })
+    .from(task)
+    .where(and(eq(task.userId, user.id), sql`search_tsv @@ ${tsq}`))
+    .orderBy(sql`ts_rank(search_tsv, ${tsq}) DESC`, desc(task.updatedAt))
+    .limit(20);
+  return c.json({ tasks: rows });
 });
 
 router.post("/tasks", async (c) => {

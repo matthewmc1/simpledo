@@ -7,9 +7,10 @@ import { btnGhost } from "../components/briefing/buttons";
 import { Checkbox } from "../components/Checkbox";
 import { PriorityMark } from "../components/PriorityMark";
 import { SourceIcon } from "../components/SourceIcon";
+import { VirtualList } from "../components/VirtualList";
 import { useCaptureModal } from "../stores/captureStore";
 import { useEnsureProjectsLoaded, useProjectStore } from "../stores/projectStore";
-import { useEnsureTasksLoaded, useTaskStore } from "../stores/taskStore";
+import { useEnsureStatusLoaded, useTaskStore } from "../stores/taskStore";
 
 type ListStatus = Extract<Status, "next" | "waiting" | "someday">;
 
@@ -67,7 +68,7 @@ const CONFIGS: Record<ListStatus, ListConfig> = {
 };
 
 function StatusListView({ status }: { status: ListStatus }) {
-  useEnsureTasksLoaded();
+  useEnsureStatusLoaded(status);
   useEnsureProjectsLoaded();
 
   const cfg = CONFIGS[status];
@@ -123,20 +124,17 @@ function StatusListView({ status }: { status: ListStatus }) {
         ) : empty ? (
           <EmptyState title={cfg.emptyTitle} body={cfg.emptyBody} />
         ) : (
-          <ul
+          <VirtualList
+            items={ownTasks}
+            getKey={(t) => t.id}
+            estimateSize={84}
             style={{
-              margin: 0,
-              padding: 0,
-              listStyle: "none",
               border: "1px solid var(--hairline)",
               borderRadius: 4,
-              overflow: "hidden",
               background: "var(--paper)",
             }}
-          >
-            {ownTasks.map((t, i) => (
+            renderItem={(t, i) => (
               <TaskRow
-                key={t.id}
                 task={t}
                 projectName={t.projectId ? projectsById.get(t.projectId)?.name ?? "" : ""}
                 projectColor={t.projectId ? projectsById.get(t.projectId)?.color ?? "" : ""}
@@ -154,8 +152,8 @@ function StatusListView({ status }: { status: ListStatus }) {
                   if (confirm(`Delete "${t.title}"?`)) void deleteTask(t.id);
                 }}
               />
-            ))}
-          </ul>
+            )}
+          />
         )}
       </div>
     </BriefingShell>

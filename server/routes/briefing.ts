@@ -1,5 +1,5 @@
 import { Hono } from "hono";
-import { and, eq, gte, lt, ne } from "drizzle-orm";
+import { and, eq, gte, inArray, isNull, lt, lte, ne, sql } from "drizzle-orm";
 import { db } from "../db/client";
 import { env } from "../env";
 import { inboxItem, project, task } from "../db/schema";
@@ -119,7 +119,8 @@ router.post("/briefing", async (c) => {
     .from(task)
     .leftJoin(project, eq(project.id, task.projectId))
     .where(and(eq(task.userId, user.id), eq(task.status, "today")))
-    .orderBy(task.createdAt);
+    .orderBy(task.createdAt)
+    .limit(40);
 
   const inbox = await db
     .select({
@@ -129,7 +130,8 @@ router.post("/briefing", async (c) => {
     })
     .from(inboxItem)
     .where(eq(inboxItem.userId, user.id))
-    .orderBy(inboxItem.capturedAt);
+    .orderBy(inboxItem.capturedAt)
+    .limit(40);
 
   const prompt = buildPrompt(tasks, inbox);
   return streamFromOllama(prompt, 0.4);
@@ -246,7 +248,8 @@ router.post("/review", async (c) => {
   const weekAgo = new Date(now - WEEK_MS);
   const twoWeeksAgo = new Date(now - TWO_WEEK_MS);
 
-  // Wins: tasks completed in the last 7 days.
+  // Wins: tasks completed in the last 7 days. LIMIT 30 — the prompt only
+  // references the top few; we don't need to hand-pick from a million rows.
   const wins = await db
     .select({
       title: task.title,
@@ -258,9 +261,11 @@ router.post("/review", async (c) => {
     .from(task)
     .leftJoin(project, eq(project.id, task.projectId))
     .where(and(eq(task.userId, user.id), eq(task.status, "done"), gte(task.updatedAt, weekAgo)))
-    .orderBy(task.updatedAt);
+    .orderBy(task.updatedAt)
+    .limit(30);
 
   // Stale: open (non-inbox, non-done) tasks not touched in 14+ days.
+  // Filter `status != inbox` at the SQL level + LIMIT 20.
   const staleRows = await db
     .select({
       title: task.title,
@@ -272,11 +277,21 @@ router.post("/review", async (c) => {
     })
     .from(task)
     .leftJoin(project, eq(project.id, task.projectId))
-    .where(and(eq(task.userId, user.id), lt(task.updatedAt, twoWeeksAgo), ne(task.status, "done")))
-    .orderBy(task.updatedAt);
-  const stale = staleRows.filter((r) => r.status !== "inbox").slice(0, 12);
+    .where(
+      and(
+        eq(task.userId, user.id),
+        lt(task.updatedAt, twoWeeksAgo),
+        ne(task.status, "done"),
+        ne(task.status, "inbox"),
+      ),
+    )
+    .orderBy(task.updatedAt)
+    .limit(20);
+  const stale = staleRows.slice(0, 12);
 
-  // Upcoming: open tasks (today/next/waiting/someday) — what's queued for next week.
+  // Upcoming: open tasks (today/next/waiting/someday). Filter the four
+  // statuses in SQL via `inArray` so we don't pull "done"/"inbox" rows we'd
+  // discard. LIMIT 20.
   const upcomingRows = await db
     .select({
       title: task.title,
@@ -288,38 +303,52 @@ router.post("/review", async (c) => {
     })
     .from(task)
     .leftJoin(project, eq(project.id, task.projectId))
-    .where(and(eq(task.userId, user.id), ne(task.status, "done")))
-    .orderBy(task.priority);
-  const upcoming = upcomingRows
-    .filter((r) => r.status === "today" || r.status === "next" || r.status === "waiting" || r.status === "someday")
-    .slice(0, 12);
+    .where(
+      and(
+        eq(task.userId, user.id),
+        inArray(task.status, ["today", "next", "waiting", "someday"]),
+      ),
+    )
+    .orderBy(task.priority)
+    .limit(20);
+  const upcoming = upcomingRows.slice(0, 12);
 
-  // Project activity rollup.
-  const allTasksForRollup = await db
+  // Project activity rollup. Single grouped query rather than "load all
+  // tasks, group in JS" — Postgres computes the aggregates and the result
+  // set is one row per project regardless of how many tasks exist.
+  const rollupRows = await db
     .select({
       projectId: task.projectId,
-      status: task.status,
-      updatedAt: task.updatedAt,
+      doneCount:
+        sql<number>`count(*) filter (where ${task.status} = 'done')`.mapWith(Number),
+      totalCount: sql<number>`count(*)`.mapWith(Number),
+      lastTaskUpdate: sql<Date | null>`max(${task.updatedAt})`,
     })
     .from(task)
-    .where(eq(task.userId, user.id));
+    .where(eq(task.userId, user.id))
+    .groupBy(task.projectId);
 
   const userProjects = await db
     .select({ id: project.id, name: project.name, updatedAt: project.updatedAt })
     .from(project)
     .where(and(eq(project.userId, user.id), eq(project.archived, false)));
 
+  const rollupByProject = new Map(
+    rollupRows
+      .filter((r): r is typeof r & { projectId: string } => r.projectId !== null)
+      .map((r) => [r.projectId, r]),
+  );
+
   const projectRollups: ReviewProject[] = userProjects.map((p) => {
-    const own = allTasksForRollup.filter((t) => t.projectId === p.id);
-    const doneCount = own.filter((t) => t.status === "done").length;
-    const openCount = own.length - doneCount;
+    const r = rollupByProject.get(p.id);
+    const doneCount = r?.doneCount ?? 0;
+    const totalCount = r?.totalCount ?? 0;
+    const openCount = totalCount - doneCount;
     // For empty projects we fall back to the project's own updatedAt; otherwise
-    // we use the most-recent task. Either way this is the *project-level*
-    // signal — see the prompt's "task age vs project age" note.
+    // we use Postgres's `max(task.updatedAt)`. Either way this is the
+    // *project-level* signal — see the prompt's "task age vs project age" note.
     const lastTouched =
-      own.length > 0
-        ? Math.max(...own.map((t) => new Date(t.updatedAt).getTime()))
-        : new Date(p.updatedAt).getTime();
+      r?.lastTaskUpdate ? new Date(r.lastTaskUpdate).getTime() : new Date(p.updatedAt).getTime();
     const daysSinceLastTaskUpdate =
       lastTouched > 0 ? Math.round((now - lastTouched) / DAY_MS) : null;
     return { name: p.name, doneCount, openCount, daysSinceLastTaskUpdate };
@@ -410,28 +439,46 @@ router.post("/calendar/recommend", async (c) => {
     throw new HTTPError(400, "Invalid from/to range");
   }
 
-  const allTasks = await db
-    .select({
-      title: task.title,
-      priority: task.priority,
-      status: task.status,
-      due: task.due,
-      dueText: task.dueText,
-      createdAt: task.createdAt,
-      projectName: project.name,
-    })
+  // Split into two indexed queries instead of "fetch everything, filter in
+  // JS": one for the date range (uses task_user_due_idx) and one for the
+  // unscheduled open set. Each is hard-capped at 20 rows.
+  const COMMON_COLS = {
+    title: task.title,
+    priority: task.priority,
+    status: task.status,
+    due: task.due,
+    dueText: task.dueText,
+    createdAt: task.createdAt,
+    projectName: project.name,
+  };
+
+  const inRange = await db
+    .select(COMMON_COLS)
     .from(task)
     .leftJoin(project, eq(project.id, task.projectId))
-    .where(and(eq(task.userId, user.id), ne(task.status, "done")));
+    .where(
+      and(
+        eq(task.userId, user.id),
+        ne(task.status, "done"),
+        gte(task.due, from),
+        lte(task.due, to),
+      ),
+    )
+    .orderBy(task.due)
+    .limit(20);
 
-  const inRange = allTasks
-    .filter((t) => t.due && new Date(t.due) >= from && new Date(t.due) <= to)
-    .sort((a, b) => new Date(a.due!).getTime() - new Date(b.due!).getTime())
-    .slice(0, 20);
-
-  const unscheduled = allTasks
-    .filter((t) => !t.due && (t.status === "today" || t.status === "next" || t.status === "waiting" || t.status === "someday"))
-    .slice(0, 20);
+  const unscheduled = await db
+    .select(COMMON_COLS)
+    .from(task)
+    .leftJoin(project, eq(project.id, task.projectId))
+    .where(
+      and(
+        eq(task.userId, user.id),
+        isNull(task.due),
+        inArray(task.status, ["today", "next", "waiting", "someday"]),
+      ),
+    )
+    .limit(20);
 
   // Format a human range label like "Mon May 18 → Sun May 24".
   const rangeLabel = `${from.toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric" })} → ${to.toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric" })}`;
