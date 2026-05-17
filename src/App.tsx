@@ -1,3 +1,4 @@
+import { lazy, Suspense, type ReactNode } from "react";
 import { useHotkeys } from "react-hotkeys-hook";
 import { BrowserRouter, Route, Routes } from "react-router-dom";
 import { LoginScreen } from "./auth/LoginScreen";
@@ -8,13 +9,62 @@ import { ProjectCreateModal } from "./components/ProjectCreateModal";
 import { useCaptureModal } from "./stores/captureStore";
 import { TweaksPanel } from "./tweaks/TweaksPanel";
 import { TweaksProvider } from "./tweaks/TweaksProvider";
+// TodayView is the home route — eager so first paint after login has no
+// Suspense fallback flash. Every other view is split out to keep the initial
+// JS chunk lean.
 import { TodayView } from "./views/TodayView";
-import { InboxView } from "./views/InboxView";
-import { ProjectView } from "./views/ProjectView";
-import { NextView, SomedayView, WaitingView } from "./views/StatusListView";
-import { TaskDetailView } from "./views/TaskDetailView";
-import { WeekView } from "./views/WeekView";
-import { WeeklyReviewView } from "./views/WeeklyReviewView";
+
+const InboxView = lazy(() =>
+  import("./views/InboxView").then((m) => ({ default: m.InboxView })),
+);
+const ProjectView = lazy(() =>
+  import("./views/ProjectView").then((m) => ({ default: m.ProjectView })),
+);
+const NextView = lazy(() =>
+  import("./views/StatusListView").then((m) => ({ default: m.NextView })),
+);
+const WaitingView = lazy(() =>
+  import("./views/StatusListView").then((m) => ({ default: m.WaitingView })),
+);
+const SomedayView = lazy(() =>
+  import("./views/StatusListView").then((m) => ({ default: m.SomedayView })),
+);
+const TaskDetailView = lazy(() =>
+  import("./views/TaskDetailView").then((m) => ({ default: m.TaskDetailView })),
+);
+const WeekView = lazy(() =>
+  import("./views/WeekView").then((m) => ({ default: m.WeekView })),
+);
+const WeeklyReviewView = lazy(() =>
+  import("./views/WeeklyReviewView").then((m) => ({ default: m.WeeklyReviewView })),
+);
+
+/** Minimal placeholder shown for the few hundred ms between route entry and
+ *  the lazy chunk arriving. Matches the editorial UI: warm paper, muted mono. */
+function RouteFallback() {
+  return (
+    <div
+      style={{
+        minHeight: "100vh",
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        background: "var(--paper)",
+        color: "var(--muted)",
+        fontFamily: "var(--mono)",
+        fontSize: 11,
+        letterSpacing: "0.1em",
+        textTransform: "uppercase",
+      }}
+    >
+      Loading…
+    </div>
+  );
+}
+
+function Lazy({ children }: { children: ReactNode }) {
+  return <Suspense fallback={<RouteFallback />}>{children}</Suspense>;
+}
 
 function AuthedApp() {
   const setCaptureOpen = useCaptureModal((s) => s.setOpen);
@@ -33,14 +83,14 @@ function AuthedApp() {
     <BrowserRouter>
       <Routes>
         <Route path="/" element={<TodayView />} />
-        <Route path="/inbox" element={<InboxView />} />
-        <Route path="/next" element={<NextView />} />
-        <Route path="/waiting" element={<WaitingView />} />
-        <Route path="/someday" element={<SomedayView />} />
-        <Route path="/project/:id" element={<ProjectView />} />
-        <Route path="/task/:id" element={<TaskDetailView />} />
-        <Route path="/calendar" element={<WeekView />} />
-        <Route path="/review" element={<WeeklyReviewView />} />
+        <Route path="/inbox" element={<Lazy><InboxView /></Lazy>} />
+        <Route path="/next" element={<Lazy><NextView /></Lazy>} />
+        <Route path="/waiting" element={<Lazy><WaitingView /></Lazy>} />
+        <Route path="/someday" element={<Lazy><SomedayView /></Lazy>} />
+        <Route path="/project/:id" element={<Lazy><ProjectView /></Lazy>} />
+        <Route path="/task/:id" element={<Lazy><TaskDetailView /></Lazy>} />
+        <Route path="/calendar" element={<Lazy><WeekView /></Lazy>} />
+        <Route path="/review" element={<Lazy><WeeklyReviewView /></Lazy>} />
         <Route path="*" element={<TodayView />} />
       </Routes>
       <CaptureModal />
@@ -52,24 +102,7 @@ function AuthedApp() {
 function Gate() {
   const { state } = useSession();
   if (state.status === "loading") {
-    return (
-      <div
-        style={{
-          minHeight: "100vh",
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "center",
-          background: "var(--paper)",
-          color: "var(--muted)",
-          fontFamily: "var(--mono)",
-          fontSize: 11,
-          letterSpacing: "0.1em",
-          textTransform: "uppercase",
-        }}
-      >
-        Loading…
-      </div>
-    );
+    return <RouteFallback />;
   }
   if (state.status === "anonymous") return <LoginScreen />;
   return <AuthedApp />;

@@ -18,4 +18,11 @@ export default defineConfig({
       },
     },
   },
+  // Strip `console.*` and `debugger` from production builds. Dev keeps them so
+  // the existing error toasts + console.error fallbacks remain useful while
+  // working locally. (`drop` only applies during esbuild's minify pass, which
+  // Vite runs for `vite build`, not `vite dev`.)
+  esbuild: {
+    drop: ["console", "debugger"],
+  },
 });

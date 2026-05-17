@@ -27,6 +27,12 @@ function parseSections(text: string): { recap: string; focus: string } {
   };
 }
 
+function isAbortError(e: unknown): boolean {
+  return e instanceof DOMException && e.name === "AbortError";
+}
+
+let inflightController: AbortController | null = null;
+
 export const useReviewStore = create<ReviewState>((set, get) => ({
   status: "idle",
   error: null,
@@ -34,24 +40,38 @@ export const useReviewStore = create<ReviewState>((set, get) => ({
   focus: "",
   generation: 0,
 
-  reset: () => set({ status: "idle", error: null, recap: "", focus: "", generation: 0 }),
+  reset: () => {
+    inflightController?.abort();
+    inflightController = null;
+    set({ status: "idle", error: null, recap: "", focus: "", generation: 0 });
+  },
 
   generate: async () => {
     if (get().status === "streaming") return;
+    inflightController?.abort();
+    const controller = new AbortController();
+    inflightController = controller;
     set({ status: "streaming", error: null, recap: "", focus: "" });
 
     let res: Response;
     try {
-      res = await fetch("/api/review", { method: "POST", credentials: "include" });
+      res = await fetch("/api/review", {
+        method: "POST",
+        credentials: "include",
+        signal: controller.signal,
+      });
     } catch (e) {
+      if (isAbortError(e)) return;
       const msg = e instanceof Error ? e.message : String(e);
       set({ status: "error", error: msg });
+      if (inflightController === controller) inflightController = null;
       return;
     }
 
     if (!res.ok || !res.body) {
       const text = await res.text().catch(() => res.statusText);
       set({ status: "error", error: text || `HTTP ${res.status}` });
+      if (inflightController === controller) inflightController = null;
       return;
     }
 
@@ -65,6 +85,7 @@ export const useReviewStore = create<ReviewState>((set, get) => ({
       while (true) {
         const { value, done } = await reader.read();
         if (done) break;
+        if (controller.signal.aborted) return;
         buffer += decoder.decode(value, { stream: true });
         const lines = buffer.split("\n");
         buffer = lines.pop() ?? "";
@@ -81,11 +102,14 @@ export const useReviewStore = create<ReviewState>((set, get) => ({
         set({ recap, focus });
       }
     } catch (e) {
+      if (isAbortError(e)) return;
       const msg = e instanceof Error ? e.message : String(e);
       set({ status: "error", error: msg });
+      if (inflightController === controller) inflightController = null;
       return;
     }
 
+    if (controller.signal.aborted) return;
     const { recap, focus } = parseSections(accumulated);
     set({
       status: "ready",
@@ -93,6 +117,7 @@ export const useReviewStore = create<ReviewState>((set, get) => ({
       focus,
       generation: get().generation + 1,
     });
+    if (inflightController === controller) inflightController = null;
   },
 }));
 

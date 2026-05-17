@@ -18,17 +18,33 @@ function parseRecommend(text: string): string {
   return text.slice(idx + "RECOMMEND:".length).trim();
 }
 
+function isAbortError(e: unknown): boolean {
+  return e instanceof DOMException && e.name === "AbortError";
+}
+
+let inflightController: AbortController | null = null;
+
 export const useCalendarRecommendStore = create<State>((set, get) => ({
   status: "idle",
   error: null,
   recommend: "",
   lastKey: null,
 
-  reset: () => set({ status: "idle", error: null, recommend: "", lastKey: null }),
+  reset: () => {
+    inflightController?.abort();
+    inflightController = null;
+    set({ status: "idle", error: null, recommend: "", lastKey: null });
+  },
 
   generate: async (fromIso, toIso) => {
     const key = `${fromIso}|${toIso}`;
     if (get().status === "streaming") return;
+    // The user just changed weeks while a previous stream was in flight —
+    // cancel the old one so we don't write its result into state after the
+    // new range's request arrives.
+    inflightController?.abort();
+    const controller = new AbortController();
+    inflightController = controller;
     set({ status: "streaming", error: null, recommend: "" });
 
     let res: Response;
@@ -37,16 +53,20 @@ export const useCalendarRecommendStore = create<State>((set, get) => ({
       res = await fetch(`/api/calendar/recommend?${qs}`, {
         method: "POST",
         credentials: "include",
+        signal: controller.signal,
       });
     } catch (e) {
+      if (isAbortError(e)) return;
       const msg = e instanceof Error ? e.message : String(e);
       set({ status: "error", error: msg });
+      if (inflightController === controller) inflightController = null;
       return;
     }
 
     if (!res.ok || !res.body) {
       const text = await res.text().catch(() => res.statusText);
       set({ status: "error", error: text || `HTTP ${res.status}` });
+      if (inflightController === controller) inflightController = null;
       return;
     }
 
@@ -60,6 +80,7 @@ export const useCalendarRecommendStore = create<State>((set, get) => ({
       while (true) {
         const { value, done } = await reader.read();
         if (done) break;
+        if (controller.signal.aborted) return;
         buffer += decoder.decode(value, { stream: true });
         const lines = buffer.split("\n");
         buffer = lines.pop() ?? "";
@@ -75,15 +96,19 @@ export const useCalendarRecommendStore = create<State>((set, get) => ({
         set({ recommend: parseRecommend(accumulated) });
       }
     } catch (e) {
+      if (isAbortError(e)) return;
       const msg = e instanceof Error ? e.message : String(e);
       set({ status: "error", error: msg });
+      if (inflightController === controller) inflightController = null;
       return;
     }
 
+    if (controller.signal.aborted) return;
     set({
       status: "ready",
       recommend: parseRecommend(accumulated),
       lastKey: key,
     });
+    if (inflightController === controller) inflightController = null;
   },
 }));
