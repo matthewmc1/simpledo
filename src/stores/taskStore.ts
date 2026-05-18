@@ -1,6 +1,6 @@
 import { useEffect } from "react";
 import { create } from "zustand";
-import type { CreateTaskInput, Priority, Status, Task } from "@shared/types";
+import type { CreateTaskInput, Priority, Status, Task, TaskKind } from "@shared/types";
 import {
   createSubtask as apiCreateSubtask,
   createTask as apiCreateTask,
@@ -56,6 +56,9 @@ interface TaskState {
   setClientDescription: (taskId: string, clientDescription: string) => Promise<void>;
   cyclePriority: (taskId: string) => Promise<void>;
   setPriority: (taskId: string, priority: Priority) => Promise<void>;
+  setKind: (taskId: string, kind: TaskKind) => Promise<void>;
+  setRegression: (taskId: string, isRegression: boolean) => Promise<void>;
+  setRegressionOf: (taskId: string, releaseId: string | null) => Promise<void>;
   toggleSubtask: (taskId: string, subtaskId: string) => Promise<void>;
   addSubtask: (taskId: string, title: string) => Promise<void>;
   editSubtask: (taskId: string, subtaskId: string, title: string) => Promise<void>;
@@ -240,6 +243,37 @@ export const useTaskStore = create<TaskState>((set, get) => {
       if (!target || target.priority === priority) return;
       const next = localUpdate(taskId, { priority });
       await optimistic(next, () => patchTask(taskId, { priority }));
+    },
+
+    setKind: async (taskId, kind) => {
+      const target = get().tasks.find((t) => t.id === taskId);
+      if (!target || target.kind === kind) return;
+      // When moving away from "bug", clear the regression flag — it has no
+      // meaning on feature/chore items.
+      const patch: Partial<Task> =
+        kind !== "bug" ? { kind, isRegression: false } : { kind };
+      const next = localUpdate(taskId, patch);
+      await optimistic(next, () => patchTask(taskId, patch));
+    },
+
+    setRegression: async (taskId, isRegression) => {
+      const target = get().tasks.find((t) => t.id === taskId);
+      if (!target || target.isRegression === isRegression) return;
+      const next = localUpdate(taskId, { isRegression });
+      await optimistic(next, () => patchTask(taskId, { isRegression }));
+    },
+
+    setRegressionOf: async (taskId, releaseId) => {
+      const target = get().tasks.find((t) => t.id === taskId);
+      if (!target || target.regressionOfReleaseId === releaseId) return;
+      // Setting/clearing the FK is the canonical regression flag; keep the
+      // legacy boolean in sync so existing UI and queries still work.
+      const patch: Partial<Task> = {
+        regressionOfReleaseId: releaseId,
+        isRegression: !!releaseId,
+      };
+      const next = localUpdate(taskId, patch);
+      await optimistic(next, () => patchTask(taskId, patch));
     },
 
     setNotes: async (taskId, notes) => {

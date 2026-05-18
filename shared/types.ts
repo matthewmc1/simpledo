@@ -13,6 +13,9 @@ export const StatusSchema = z.enum([
 ]);
 export type Status = z.infer<typeof StatusSchema>;
 
+export const TaskKindSchema = z.enum(["feature", "bug", "chore"]);
+export type TaskKind = z.infer<typeof TaskKindSchema>;
+
 export const IntegrationSchema = z.enum([
   "linear",
   "jira",
@@ -33,6 +36,8 @@ export const ProjectSchema = z.object({
   description: z.string(),
   source: z.string().nullable(),
   archived: z.boolean(),
+  /** Definition-of-done items every release in this project should satisfy. */
+  releaseChecklist: z.array(z.string()),
   createdAt: z.string(),
   updatedAt: z.string(),
 });
@@ -62,6 +67,14 @@ export const TaskSchema = z.object({
    *  detail page show "items originally planned but moved out". */
   previousReleaseId: z.string().nullable(),
   clientDescription: z.string(),
+  /** feature / bug / chore — used for release quality rollups. */
+  kind: TaskKindSchema,
+  /** Legacy regression boolean. Prefer `regressionOfReleaseId` (an explicit
+   *  link to the release this bug regresses against). */
+  isRegression: z.boolean(),
+  /** When set on a bug, identifies the earlier release whose shipped
+   *  behaviour broke. */
+  regressionOfReleaseId: z.string().nullable(),
   integration: z.string().nullable(),
   integrationId: z.string().nullable(),
   createdAt: z.string(),
@@ -85,6 +98,11 @@ export const ReleaseSchema = z.object({
   releasedAt: z.string().nullable(),
   /** Optional customer tags — who was waiting for this release. */
   customers: z.array(z.string()),
+  /** Definition-of-done items for this release. Must all appear in
+   *  `checklistCompleted` before the release can be marked released. */
+  checklistItems: z.array(z.string()),
+  /** Subset of `checklistItems` that's been ticked off. */
+  checklistCompleted: z.array(z.string()),
   createdAt: z.string(),
   updatedAt: z.string(),
 });
@@ -108,6 +126,8 @@ export const UpdateReleaseInputSchema = z
     notes: z.string().max(5000),
     releasedAt: z.string().datetime().nullable(),
     customers: z.array(z.string().min(1).max(120)).max(50),
+    checklistItems: z.array(z.string().min(1).max(200)).max(30),
+    checklistCompleted: z.array(z.string().min(1).max(200)).max(30),
   })
   .partial();
 export type UpdateReleaseInput = z.infer<typeof UpdateReleaseInputSchema>;
@@ -143,6 +163,7 @@ export const UpdateProjectInputSchema = z
     color: z.string().max(40),
     description: z.string().max(2000),
     archived: z.boolean(),
+    releaseChecklist: z.array(z.string().min(1).max(200)).max(30),
   })
   .partial();
 export type UpdateProjectInput = z.infer<typeof UpdateProjectInputSchema>;
@@ -181,6 +202,9 @@ export const UpdateTaskInputSchema = z
     projectId: z.string().uuid().nullable(),
     releaseId: z.string().uuid().nullable(),
     clientDescription: z.string().max(500),
+    kind: TaskKindSchema,
+    isRegression: z.boolean(),
+    regressionOfReleaseId: z.string().uuid().nullable(),
   })
   .partial();
 export type UpdateTaskInput = z.infer<typeof UpdateTaskInputSchema>;
@@ -193,6 +217,7 @@ export const CreateTaskInputSchema = z.object({
   releaseId: z.string().uuid().nullable().optional(),
   notes: z.string().max(10_000).optional(),
   clientDescription: z.string().max(500).optional(),
+  kind: TaskKindSchema.optional(),
 });
 export type CreateTaskInput = z.infer<typeof CreateTaskInputSchema>;
 

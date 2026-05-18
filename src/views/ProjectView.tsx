@@ -5,6 +5,7 @@ import { BriefingShell } from "../components/briefing/BriefingShell";
 import { SectionLabel } from "../components/briefing/SectionLabel";
 import { ViewHeader } from "../components/briefing/ViewHeader";
 import { btnGhost, btnPrimary } from "../components/briefing/buttons";
+import { BurndownChart } from "../components/BurndownChart";
 import { Checkbox } from "../components/Checkbox";
 import { PriorityMark } from "../components/PriorityMark";
 import { ReleaseTimeline } from "../components/ReleaseTimeline";
@@ -413,6 +414,26 @@ export function ProjectView() {
         </div>
 
         <aside style={{ display: "flex", flexDirection: "column", gap: 24, minWidth: 0 }}>
+          {/* Burndown — open tasks over the last 30 days. Cheap visual signal
+              for whether the project is converging or sprawling. */}
+          {projectTasks.length > 0 && (
+            <div>
+              <div
+                style={{
+                  fontFamily: "var(--mono)",
+                  fontSize: 10,
+                  letterSpacing: "0.08em",
+                  textTransform: "uppercase",
+                  color: "var(--muted)",
+                  marginBottom: 8,
+                }}
+              >
+                Burndown · last 30 days
+              </div>
+              <BurndownChart tasks={projectTasks} days={30} />
+            </div>
+          )}
+
           <div
             style={{
               padding: "14px 16px",

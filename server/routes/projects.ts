@@ -17,6 +17,7 @@ const COLS = {
   description: project.description,
   source: project.source,
   archived: project.archived,
+  releaseChecklist: project.releaseChecklist,
   createdAt: project.createdAt,
   updatedAt: project.updatedAt,
 };

@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
-import type { Priority, Release, Status, Subtask, Task } from "@shared/types";
+import type { Priority, Release, Status, Subtask, Task, TaskKind } from "@shared/types";
 import { BriefingShell } from "../components/briefing/BriefingShell";
 import { SectionLabel } from "../components/briefing/SectionLabel";
 import { ViewHeader } from "../components/briefing/ViewHeader";
@@ -75,6 +75,8 @@ export function TaskDetailView() {
   const setRelease = useTaskStore((s) => s.setRelease);
   const setClientDescription = useTaskStore((s) => s.setClientDescription);
   const setPriority = useTaskStore((s) => s.setPriority);
+  const setKind = useTaskStore((s) => s.setKind);
+  const setRegressionOf = useTaskStore((s) => s.setRegressionOf);
   const cyclePriority = useTaskStore((s) => s.cyclePriority);
   const toggleDone = useTaskStore((s) => s.toggleDone);
   const deleteTask = useTaskStore((s) => s.deleteTask);
@@ -148,6 +150,8 @@ export function TaskDetailView() {
       onSetRelease={(rid) => void setRelease(task.id, rid)}
       onSetClientDescription={(text) => void setClientDescription(task.id, text)}
       onSetPriority={(p) => void setPriority(task.id, p)}
+      onSetKind={(k) => void setKind(task.id, k)}
+      onSetRegressionOf={(rid) => void setRegressionOf(task.id, rid)}
       onCyclePriority={() => void cyclePriority(task.id)}
       onToggleDone={() => void toggleDone(task.id)}
       onDelete={async () => {
@@ -178,6 +182,8 @@ interface DetailProps {
   onSetRelease: (releaseId: string | null) => void;
   onSetClientDescription: (text: string) => void;
   onSetPriority: (priority: Priority) => void;
+  onSetKind: (kind: TaskKind) => void;
+  onSetRegressionOf: (releaseId: string | null) => void;
   onCyclePriority: () => void;
   onToggleDone: () => void;
   onDelete: () => Promise<void>;
@@ -202,6 +208,8 @@ function TaskDetail({
   onSetRelease,
   onSetClientDescription,
   onSetPriority,
+  onSetKind,
+  onSetRegressionOf,
   onCyclePriority,
   onToggleDone,
   onDelete,
@@ -687,6 +695,80 @@ function TaskDetail({
             </div>
           </div>
 
+          {/* Kind — feature / bug / chore. Used for release quality rollups. */}
+          <div>
+            <SectionLabel label="Kind" small />
+            <div
+              style={{
+                marginTop: 10,
+                display: "flex",
+                gap: 4,
+                border: "1px solid var(--hairline)",
+                borderRadius: 4,
+                padding: 3,
+              }}
+            >
+              {(["feature", "bug", "chore"] as const).map((k) => (
+                <button
+                  key={k}
+                  type="button"
+                  onClick={() => onSetKind(k)}
+                  aria-pressed={task.kind === k}
+                  style={{
+                    flex: 1,
+                    padding: "5px 8px",
+                    background: task.kind === k ? "var(--ink)" : "transparent",
+                    color: task.kind === k ? "var(--paper)" : "var(--ink)",
+                    border: "none",
+                    borderRadius: 3,
+                    cursor: "pointer",
+                    fontFamily: "var(--mono)",
+                    fontSize: 10,
+                    letterSpacing: "0.06em",
+                    textTransform: "uppercase",
+                  }}
+                >
+                  {k}
+                </button>
+              ))}
+            </div>
+            {task.kind === "bug" && (
+              <div style={{ marginTop: 10 }}>
+                <div
+                  style={{
+                    fontFamily: "var(--mono)",
+                    fontSize: 9,
+                    letterSpacing: "0.1em",
+                    textTransform: "uppercase",
+                    color: "var(--muted)",
+                    marginBottom: 6,
+                  }}
+                >
+                  Regression of
+                </div>
+                <RegressionPicker
+                  currentReleaseId={task.regressionOfReleaseId}
+                  releases={releases}
+                  onPick={(rid) => onSetRegressionOf(rid)}
+                />
+                <p
+                  style={{
+                    margin: "6px 0 0",
+                    fontFamily: "var(--serif)",
+                    fontStyle: "italic",
+                    fontSize: 12,
+                    lineHeight: 1.45,
+                    color: "var(--muted)",
+                  }}
+                >
+                  Pick the earlier release whose behaviour this bug breaks.
+                  Linking back makes this show up as a regression on that
+                  release's page.
+                </p>
+              </div>
+            )}
+          </div>
+
           {/* Due */}
           <div>
             <SectionLabel label="Due" small />
@@ -1119,6 +1201,58 @@ function SubtaskAdd({ onAdd }: { onAdd: (title: string) => void }) {
         </button>
       )}
     </div>
+  );
+}
+
+function RegressionPicker({
+  currentReleaseId,
+  releases,
+  onPick,
+}: {
+  currentReleaseId: string | null;
+  releases: Release[];
+  onPick: (releaseId: string | null) => void;
+}) {
+  // Only released versions are valid regression anchors — you can't regress
+  // against something that hasn't shipped yet.
+  const eligible = releases.filter((r) => !!r.releasedAt);
+  const current = currentReleaseId
+    ? releases.find((r) => r.id === currentReleaseId) ?? null
+    : null;
+
+  return (
+    <select
+      value={currentReleaseId ?? ""}
+      onChange={(e) => onPick(e.target.value === "" ? null : e.target.value)}
+      disabled={eligible.length === 0 && !current}
+      style={{
+        width: "100%",
+        padding: "6px 8px",
+        border: "1px solid var(--hairline)",
+        borderRadius: 3,
+        background: "transparent",
+        color: "var(--ink)",
+        fontFamily: "var(--mono)",
+        fontSize: 12,
+        outline: "none",
+      }}
+    >
+      <option value="">— not a regression —</option>
+      {eligible.map((r) => (
+        <option key={r.id} value={r.id}>
+          {r.version}
+          {r.name ? ` · ${r.name}` : ""}
+        </option>
+      ))}
+      {/* Keep the current selection visible even if it no longer matches the
+          eligible list (e.g. user un-released the version after linking). */}
+      {current && !current.releasedAt && (
+        <option value={current.id}>
+          {current.version}
+          {current.name ? ` · ${current.name}` : ""} (planned)
+        </option>
+      )}
+    </select>
   );
 }
 

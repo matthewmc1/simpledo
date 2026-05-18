@@ -57,6 +57,9 @@ export interface ReleaseDetailTask {
   releaseId: string | null;
   previousReleaseId: string | null;
   clientDescription: string;
+  kind: "feature" | "bug" | "chore";
+  isRegression: boolean;
+  regressionOfReleaseId: string | null;
   dueText: string | null;
   updatedAt: string;
 }
@@ -65,6 +68,8 @@ export interface ReleaseDetail {
   release: Release;
   tasks: ReleaseDetailTask[];
   movedOut: ReleaseDetailTask[];
+  /** Bugs filed later whose `regressionOfReleaseId` points at this release. */
+  regressions: ReleaseDetailTask[];
 }
 
 export async function fetchRelease(releaseId: string): Promise<ReleaseDetail> {

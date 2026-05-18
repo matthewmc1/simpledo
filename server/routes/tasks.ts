@@ -59,6 +59,9 @@ router.get("/tasks", async (c) => {
       releaseId: task.releaseId,
       previousReleaseId: task.previousReleaseId,
       clientDescription: task.clientDescription,
+      kind: task.kind,
+      isRegression: task.isRegression,
+      regressionOfReleaseId: task.regressionOfReleaseId,
       integration: task.integration,
       integrationId: task.integrationId,
       createdAt: task.createdAt,
@@ -152,7 +155,7 @@ router.post("/tasks", async (c) => {
   const body = (await c.req.json().catch(() => null)) as unknown;
   const parsed = CreateTaskInputSchema.safeParse(body);
   if (!parsed.success) throw new HTTPError(400, "Invalid task input");
-  const { title, status, priority, projectId, releaseId, notes, clientDescription } = parsed.data;
+  const { title, status, priority, projectId, releaseId, notes, clientDescription, kind } = parsed.data;
 
   const [created] = await db
     .insert(task)
@@ -165,6 +168,7 @@ router.post("/tasks", async (c) => {
       releaseId: releaseId ?? null,
       notes: notes ?? "",
       clientDescription: clientDescription ?? "",
+      kind: kind ?? "feature",
     })
     .returning({
       id: task.id,
@@ -178,6 +182,9 @@ router.post("/tasks", async (c) => {
       releaseId: task.releaseId,
       previousReleaseId: task.previousReleaseId,
       clientDescription: task.clientDescription,
+      kind: task.kind,
+      isRegression: task.isRegression,
+      regressionOfReleaseId: task.regressionOfReleaseId,
       integration: task.integration,
       integrationId: task.integrationId,
       createdAt: task.createdAt,
@@ -235,6 +242,9 @@ router.patch("/tasks/:id", async (c) => {
       releaseId: task.releaseId,
       previousReleaseId: task.previousReleaseId,
       clientDescription: task.clientDescription,
+      kind: task.kind,
+      isRegression: task.isRegression,
+      regressionOfReleaseId: task.regressionOfReleaseId,
       integration: task.integration,
       integrationId: task.integrationId,
       createdAt: task.createdAt,

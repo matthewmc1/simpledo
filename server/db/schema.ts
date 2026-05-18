@@ -63,6 +63,10 @@ export const project = pgTable(
     description: text("description").notNull().default(""),
     source: text("source"), // linear | jira | gmail | slack | calendar | null
     archived: boolean("archived").notNull().default(false),
+    /** Definition-of-done items every release in this project should satisfy
+     *  (e.g. "QA signed off", "Docs updated"). Each release tracks its own
+     *  completion via release.checklist_completed. */
+    releaseChecklist: text("release_checklist").array().notNull().default([]),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
   },
@@ -84,6 +88,12 @@ export const release = pgTable(
     // Optional customer tags — who was waiting for this release. Empty array
     // by default. Stored as a Postgres text[] (Drizzle .array()).
     customers: text("customers").array().notNull().default([]),
+    /** Definition-of-done items for THIS release — e.g. "QA signed off",
+     *  "Docs updated". Edited on the release page; the release can't be
+     *  marked released until every item is in `checklist_completed`. */
+    checklistItems: text("checklist_items").array().notNull().default([]),
+    /** Subset of `checklist_items` that has been ticked off. */
+    checklistCompleted: text("checklist_completed").array().notNull().default([]),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
   },
@@ -113,6 +123,20 @@ export const task = pgTable(
     previousReleaseId: uuid("previous_release_id").references(() => release.id, { onDelete: "set null" }),
     // Client-facing one-line summary used in changelogs. Falls back to title if blank.
     clientDescription: text("client_description").notNull().default(""),
+    /** Kind of work: feature (default), bug, or chore. Lets the release
+     *  detail page roll up bug/regression metrics for quality reporting. */
+    kind: text("kind").notNull().default("feature"),
+    /** Legacy boolean — kept for back-compat. The canonical regression
+     *  signal is now `regressionOfReleaseId` (the FK below). */
+    isRegression: boolean("is_regression").notNull().default(false),
+    /** Only meaningful when kind = 'bug'. Points at the earlier release whose
+     *  shipped behaviour this bug breaks. When set, the bug counts as a
+     *  regression against that release — the release detail page lists all
+     *  bugs that point back at it. */
+    regressionOfReleaseId: uuid("regression_of_release_id").references(
+      () => release.id,
+      { onDelete: "set null" },
+    ),
     integration: text("integration"),
     integrationId: text("integration_id"),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),

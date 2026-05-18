@@ -18,6 +18,8 @@ const RELEASE_COLS = {
   notes: release.notes,
   releasedAt: release.releasedAt,
   customers: release.customers,
+  checklistItems: release.checklistItems,
+  checklistCompleted: release.checklistCompleted,
   createdAt: release.createdAt,
   updatedAt: release.updatedAt,
 } as const;
@@ -128,6 +130,9 @@ router.get("/releases/:id", async (c) => {
     releaseId: task.releaseId,
     previousReleaseId: task.previousReleaseId,
     clientDescription: task.clientDescription,
+    kind: task.kind,
+    isRegression: task.isRegression,
+    regressionOfReleaseId: task.regressionOfReleaseId,
     dueText: task.dueText,
     updatedAt: task.updatedAt,
   } as const;
@@ -156,7 +161,23 @@ router.get("/releases/:id", async (c) => {
     .orderBy(task.updatedAt);
   const movedOutFiltered = movedOut.filter((t) => t.releaseId !== id);
 
-  return c.json({ release: rel, tasks: current, movedOut: movedOutFiltered });
+  // Regressions reported against THIS release — bugs filed later whose
+  // `regression_of_release_id` points back at it. The fix may live in a
+  // later release (their `release_id` will be different).
+  const regressions = await db
+    .select(taskCols)
+    .from(task)
+    .where(
+      and(eq(task.userId, user.id), eq(task.regressionOfReleaseId, id)),
+    )
+    .orderBy(task.updatedAt);
+
+  return c.json({
+    release: rel,
+    tasks: current,
+    movedOut: movedOutFiltered,
+    regressions,
+  });
 });
 
 router.patch("/releases/:id", async (c) => {
@@ -178,6 +199,30 @@ router.patch("/releases/:id", async (c) => {
       .limit(1);
     if (existing.length > 0 && existing[0].id !== id) {
       throw new HTTPError(409, `Version ${parsed.data.version} already exists in this project`);
+    }
+  }
+
+  // Block marking the release as released if the checklist isn't fully ticked
+  // off. Validate against the merged state (current row + this patch) so
+  // batched updates (e.g. ticking the last item + setting releasedAt in one
+  // call) work correctly.
+  if (parsed.data.releasedAt !== undefined && parsed.data.releasedAt !== null) {
+    const [current] = await db
+      .select({
+        items: release.checklistItems,
+        completed: release.checklistCompleted,
+      })
+      .from(release)
+      .where(eq(release.id, id))
+      .limit(1);
+    const items = parsed.data.checklistItems ?? current?.items ?? [];
+    const completed = new Set(parsed.data.checklistCompleted ?? current?.completed ?? []);
+    const missing = items.filter((i) => !completed.has(i));
+    if (missing.length > 0) {
+      throw new HTTPError(
+        400,
+        `Cannot mark released: ${missing.length} checklist item${missing.length === 1 ? "" : "s"} not yet completed (${missing.slice(0, 3).join(", ")}${missing.length > 3 ? "…" : ""}).`,
+      );
     }
   }
 

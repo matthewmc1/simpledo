@@ -110,12 +110,12 @@ export function ReleaseDetailView() {
     );
   }
 
+  const parentProject = projects.find((p) => p.id === detail.release.projectId) ?? null;
+
   return (
     <Detail
       detail={detail}
-      projectName={
-        projects.find((p) => p.id === detail.release.projectId)?.name ?? null
-      }
+      projectName={parentProject?.name ?? null}
       onPatch={async (input) => {
         await updateRelease(detail.release.id, input);
         // Optimistic local update — refetch to pick up server-confirmed state.
@@ -145,6 +145,8 @@ interface DetailProps {
     notes?: string;
     releasedAt?: string | null;
     customers?: string[];
+    checklistItems?: string[];
+    checklistCompleted?: string[];
   }) => Promise<void>;
   onDelete: () => Promise<void>;
   onBackToProject: () => void;
@@ -152,6 +154,39 @@ interface DetailProps {
 
 function Detail({ detail, projectName, onPatch, onDelete, onBackToProject }: DetailProps) {
   const { release, tasks, movedOut } = detail;
+
+  // Quality rollups — bugs / regressions / features in this release.
+  const bugCount = tasks.filter((t) => t.kind === "bug").length;
+  const regressionCount = tasks.filter((t) => t.kind === "bug" && t.isRegression).length;
+  const featureCount = tasks.filter((t) => t.kind === "feature").length;
+  const choreCount = tasks.filter((t) => t.kind === "chore").length;
+
+  // Checklist — the items and what's been ticked off both live on the
+  // release row, so each release can have its own definition-of-done.
+  const checklistItems = release.checklistItems;
+  const checklistDone = new Set(release.checklistCompleted);
+  const checklistCompletedCount = checklistItems.filter((i) => checklistDone.has(i)).length;
+  const checklistRemaining = checklistItems.length - checklistCompletedCount;
+  const checklistBlocksRelease = checklistItems.length > 0 && checklistRemaining > 0;
+
+  const toggleChecklist = (item: string) => {
+    const next = new Set(checklistDone);
+    if (next.has(item)) next.delete(item);
+    else next.add(item);
+    void onPatch({ checklistCompleted: [...next] });
+  };
+  const addChecklistItem = (item: string) => {
+    const trimmed = item.trim();
+    if (!trimmed || checklistItems.includes(trimmed)) return;
+    void onPatch({ checklistItems: [...checklistItems, trimmed] });
+  };
+  const removeChecklistItem = (item: string) => {
+    void onPatch({
+      checklistItems: checklistItems.filter((i) => i !== item),
+      // Also drop the completion flag so we don't leak orphans.
+      checklistCompleted: release.checklistCompleted.filter((i) => i !== item),
+    });
+  };
 
   // Inline editors for the big fields.
   const [editingName, setEditingName] = useState(false);
@@ -205,9 +240,15 @@ function Detail({ detail, projectName, onPatch, onDelete, onBackToProject }: Det
     if (released) {
       if (!confirm("Mark this release as planned again?")) return;
       void onPatch({ releasedAt: null });
-    } else {
-      void onPatch({ releasedAt: new Date().toISOString() });
+      return;
     }
+    if (checklistBlocksRelease) {
+      alert(
+        `Can't mark released — ${checklistRemaining} checklist item${checklistRemaining === 1 ? "" : "s"} still pending.`,
+      );
+      return;
+    }
+    void onPatch({ releasedAt: new Date().toISOString() });
   };
 
   const setReleaseDate = (iso: string | null) => {
@@ -325,8 +366,25 @@ function Detail({ detail, projectName, onPatch, onDelete, onBackToProject }: Det
                   ? "Copy failed"
                   : "Copy changelog"}
             </button>
-            <button onClick={toggleReleased} style={btnPrimary}>
-              {released ? "Mark planned" : "Mark released today"}
+            <button
+              onClick={toggleReleased}
+              disabled={!released && checklistBlocksRelease}
+              title={
+                !released && checklistBlocksRelease
+                  ? `Complete the ${checklistRemaining} remaining checklist item${checklistRemaining === 1 ? "" : "s"} before marking released.`
+                  : undefined
+              }
+              style={{
+                ...btnPrimary,
+                opacity: !released && checklistBlocksRelease ? 0.4 : 1,
+                cursor: !released && checklistBlocksRelease ? "not-allowed" : "pointer",
+              }}
+            >
+              {released
+                ? "Mark planned"
+                : checklistBlocksRelease
+                  ? `Mark released (${checklistRemaining} pending)`
+                  : "Mark released today"}
             </button>
             <button onClick={() => void onDelete()} style={{ ...btnGhost, color: "var(--muted)" }}>
               Delete
@@ -457,7 +515,7 @@ function Detail({ detail, projectName, onPatch, onDelete, onBackToProject }: Det
 
           {/* Moved out — issues originally planned here but moved elsewhere */}
           {movedOut.length > 0 && (
-            <section>
+            <section style={{ marginBottom: 32 }}>
               <SectionLabel
                 label={`Originally planned here · moved to a later release · ${movedOut.length}`}
                 small
@@ -478,10 +536,192 @@ function Detail({ detail, projectName, onPatch, onDelete, onBackToProject }: Det
               <TaskList tasks={movedOut} showCurrentRelease />
             </section>
           )}
+
+          {/* Regressions reported against this release — bugs filed later
+              whose `regressionOfReleaseId` points back at it. */}
+          {detail.regressions.length > 0 && (
+            <section>
+              <SectionLabel
+                label={`Regressions reported against this release · ${detail.regressions.length}`}
+                small
+              />
+              <p
+                style={{
+                  fontFamily: "var(--serif)",
+                  fontStyle: "italic",
+                  color: "var(--muted)",
+                  fontSize: 13,
+                  marginTop: 8,
+                  marginBottom: 10,
+                }}
+              >
+                Bugs filed later that broke something this release shipped. The fix may live in a
+                later version — click through to see where each bug lives now.
+              </p>
+              <TaskList tasks={detail.regressions} showCurrentRelease />
+            </section>
+          )}
         </div>
 
-        {/* Right column — metadata */}
+        {/* Right column — summaries + metadata */}
         <aside style={{ display: "flex", flexDirection: "column", gap: 24, minWidth: 0 }}>
+          {/* Quality summary — features / bugs / regressions / chores. */}
+          <div>
+            <SectionLabel label="Summary" small />
+            <div
+              style={{
+                marginTop: 10,
+                display: "grid",
+                gridTemplateColumns: "repeat(2, 1fr)",
+                gap: 10,
+              }}
+            >
+              <Stat label="Features" value={featureCount} />
+              <Stat label="Bugs" value={bugCount} accent={bugCount > 0 ? "var(--accent)" : undefined} />
+              <Stat
+                label="Regressions"
+                value={regressionCount}
+                accent={regressionCount > 0 ? "var(--accent)" : undefined}
+              />
+              <Stat label="Chores" value={choreCount} />
+            </div>
+          </div>
+
+          {/* Definition-of-done checklist — items must all be ticked before
+              "Mark released" is allowed (server enforces too). */}
+          <div>
+            <div
+              style={{
+                display: "flex",
+                justifyContent: "space-between",
+                alignItems: "baseline",
+                marginBottom: 8,
+              }}
+            >
+              <SectionLabel label="Release checklist" small />
+              {checklistItems.length > 0 && (
+                <span
+                  style={{
+                    fontFamily: "var(--mono)",
+                    fontSize: 10,
+                    letterSpacing: "0.06em",
+                    color:
+                      checklistCompletedCount === checklistItems.length
+                        ? "#2d7a4c"
+                        : "var(--muted)",
+                  }}
+                >
+                  {checklistCompletedCount}/{checklistItems.length}
+                </span>
+              )}
+            </div>
+            {checklistItems.length === 0 ? (
+              <p
+                style={{
+                  fontFamily: "var(--serif)",
+                  fontStyle: "italic",
+                  color: "var(--muted)",
+                  fontSize: 12,
+                  lineHeight: 1.45,
+                  margin: "0 0 10px",
+                }}
+              >
+                Add items every release should satisfy before shipping —{" "}
+                <em>"QA signed off"</em>, <em>"Docs updated"</em>.
+              </p>
+            ) : (
+              <ul
+                style={{
+                  margin: "0 0 10px",
+                  padding: 0,
+                  listStyle: "none",
+                  display: "flex",
+                  flexDirection: "column",
+                  gap: 2,
+                }}
+              >
+                {checklistItems.map((item) => {
+                  const done = checklistDone.has(item);
+                  return (
+                    <li
+                      key={item}
+                      style={{ display: "flex", alignItems: "center", gap: 4 }}
+                    >
+                      <button
+                        type="button"
+                        onClick={() => toggleChecklist(item)}
+                        style={{
+                          flex: 1,
+                          minWidth: 0,
+                          display: "flex",
+                          alignItems: "center",
+                          gap: 8,
+                          padding: "4px 6px",
+                          background: "transparent",
+                          border: "none",
+                          cursor: "pointer",
+                          textAlign: "left",
+                          fontFamily: "var(--ui)",
+                          fontSize: 13,
+                          color: done ? "var(--muted)" : "var(--ink)",
+                        }}
+                      >
+                        <span
+                          style={{
+                            width: 14,
+                            height: 14,
+                            borderRadius: 3,
+                            border: done ? "none" : "1.5px solid var(--hairline)",
+                            background: done ? "#2d7a4c" : "transparent",
+                            display: "flex",
+                            alignItems: "center",
+                            justifyContent: "center",
+                            color: "var(--paper)",
+                            fontFamily: "var(--mono)",
+                            fontSize: 9,
+                            flexShrink: 0,
+                          }}
+                        >
+                          {done ? "✓" : ""}
+                        </span>
+                        <span
+                          style={{
+                            textDecoration: done ? "line-through" : "none",
+                            flex: 1,
+                            minWidth: 0,
+                            overflow: "hidden",
+                            textOverflow: "ellipsis",
+                            whiteSpace: "nowrap",
+                          }}
+                        >
+                          {item}
+                        </span>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => removeChecklistItem(item)}
+                        aria-label={`Remove ${item}`}
+                        style={{
+                          background: "transparent",
+                          border: "none",
+                          color: "var(--muted)",
+                          cursor: "pointer",
+                          padding: 0,
+                          fontSize: 14,
+                          lineHeight: 1,
+                          flexShrink: 0,
+                        }}
+                      >
+                        ×
+                      </button>
+                    </li>
+                  );
+                })}
+              </ul>
+            )}
+            <ChecklistAddRow onAdd={addChecklistItem} />
+          </div>
+
           <div>
             <SectionLabel label="Release date" small />
             <div style={{ marginTop: 10 }}>
@@ -729,6 +969,95 @@ function TaskList({
         );
       })}
     </ul>
+  );
+}
+
+function Stat({ label, value, accent }: { label: string; value: number; accent?: string }) {
+  return (
+    <div>
+      <div
+        style={{
+          fontFamily: "var(--serif)",
+          fontSize: 28,
+          lineHeight: 1,
+          color: accent ?? "var(--ink)",
+          marginBottom: 4,
+        }}
+      >
+        {value}
+      </div>
+      <div
+        style={{
+          fontFamily: "var(--mono)",
+          fontSize: 9,
+          letterSpacing: "0.1em",
+          textTransform: "uppercase",
+          color: "var(--muted)",
+        }}
+      >
+        {label}
+      </div>
+    </div>
+  );
+}
+
+function ChecklistAddRow({ onAdd }: { onAdd: (item: string) => void }) {
+  const [draft, setDraft] = useState("");
+  const submit = () => {
+    const v = draft.trim();
+    if (!v) return;
+    onAdd(v);
+    setDraft("");
+  };
+  return (
+    <div style={{ display: "flex", gap: 6 }}>
+      <input
+        value={draft}
+        onChange={(e) => setDraft(e.target.value)}
+        onKeyDown={(e) => {
+          if (e.key === "Enter") {
+            e.preventDefault();
+            submit();
+          } else if (e.key === "Escape") {
+            e.preventDefault();
+            setDraft("");
+          }
+        }}
+        placeholder="Add a checklist item — e.g. QA signed off"
+        style={{
+          flex: 1,
+          minWidth: 0,
+          padding: "6px 10px",
+          border: "1px solid var(--hairline)",
+          borderRadius: 3,
+          background: "transparent",
+          color: "var(--ink)",
+          fontFamily: "var(--ui)",
+          fontSize: 13,
+          outline: "none",
+        }}
+      />
+      <button
+        type="button"
+        onClick={submit}
+        disabled={!draft.trim()}
+        style={{
+          background: "transparent",
+          border: "1px dashed var(--hairline)",
+          color: "var(--muted)",
+          padding: "6px 12px",
+          borderRadius: 3,
+          cursor: draft.trim() ? "pointer" : "default",
+          fontFamily: "var(--mono)",
+          fontSize: 10,
+          letterSpacing: "0.06em",
+          textTransform: "uppercase",
+          opacity: draft.trim() ? 1 : 0.4,
+        }}
+      >
+        Add
+      </button>
+    </div>
   );
 }
 
