@@ -81,6 +81,9 @@ export const release = pgTable(
     name: text("name"), // optional codename
     notes: text("notes").notNull().default(""),
     releasedAt: timestamp("released_at", { withTimezone: true }), // null = planned
+    // Optional customer tags — who was waiting for this release. Empty array
+    // by default. Stored as a Postgres text[] (Drizzle .array()).
+    customers: text("customers").array().notNull().default([]),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
   },
@@ -103,6 +106,11 @@ export const task = pgTable(
     dueText: text("due_text"),
     projectId: uuid("project_id").references(() => project.id, { onDelete: "set null" }),
     releaseId: uuid("release_id").references(() => release.id, { onDelete: "set null" }),
+    /** The release this task was *previously* attached to before being moved.
+     *  Lets the release detail page surface "items originally planned for
+     *  this release but moved to a later one". Set automatically server-side
+     *  whenever releaseId changes. */
+    previousReleaseId: uuid("previous_release_id").references(() => release.id, { onDelete: "set null" }),
     // Client-facing one-line summary used in changelogs. Falls back to title if blank.
     clientDescription: text("client_description").notNull().default(""),
     integration: text("integration"),

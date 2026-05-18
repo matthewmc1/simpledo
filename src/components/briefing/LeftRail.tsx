@@ -1,3 +1,4 @@
+import { useMemo, useState } from "react";
 import { Link, useLocation } from "react-router-dom";
 import { useShallow } from "zustand/react/shallow";
 import { useCaptureModal } from "../../stores/captureStore";
@@ -66,20 +67,60 @@ export function LeftRail({ activeOverride }: Props) {
     return "";
   })();
 
+  // Sidebar caps the project list at 10. Beyond that, a search input filters
+  // live across the full set. The active project is always pinned into the
+  // visible slice so navigation never makes the current project disappear.
+  const MAX_VISIBLE_PROJECTS = 10;
+  const [projectFilter, setProjectFilter] = useState("");
+  const showProjectSearch = projects.length > MAX_VISIBLE_PROJECTS;
+  const filterQuery = projectFilter.trim().toLowerCase();
+
+  const visibleProjects = useMemo(() => {
+    if (filterQuery) {
+      return projects
+        .filter((p) => p.name.toLowerCase().includes(filterQuery))
+        .slice(0, 25);
+    }
+    if (projects.length <= MAX_VISIBLE_PROJECTS) return projects;
+    // Cap the visible set, but pin the active project so navigation stays sane.
+    const head = projects.slice(0, MAX_VISIBLE_PROJECTS);
+    const activeId = activeList && projects.find((p) => p.name === activeList)?.id;
+    if (activeId && !head.some((p) => p.id === activeId)) {
+      const active = projects.find((p) => p.id === activeId)!;
+      return [...head.slice(0, MAX_VISIBLE_PROJECTS - 1), active];
+    }
+    return head;
+  }, [projects, filterQuery, activeList]);
+  const hiddenProjectCount =
+    !filterQuery && projects.length > MAX_VISIBLE_PROJECTS
+      ? projects.length - visibleProjects.length
+      : 0;
+
   return (
     <nav
       style={{
         background: "var(--ink)",
         color: "var(--paper)",
-        padding: "24px 20px",
         display: "flex",
         flexDirection: "column",
-        gap: 24,
-        overflow: "hidden",
         height: "100%",
         boxSizing: "border-box",
+        overflow: "hidden",
       }}
     >
+      {/* Scrollable middle — logo + capture + lists + projects + review */}
+      <div
+        style={{
+          flex: 1,
+          minHeight: 0,
+          overflowY: "auto",
+          overflowX: "hidden",
+          padding: "24px 20px 16px",
+          display: "flex",
+          flexDirection: "column",
+          gap: 24,
+        }}
+      >
       <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
         <div
           style={{
@@ -227,39 +268,90 @@ export function LeftRail({ activeOverride }: Props) {
             + New project
           </button>
         ) : (
-          <ul style={{ margin: 0, padding: 0, listStyle: "none", display: "flex", flexDirection: "column", gap: 2 }}>
-            {projects.map((p) => {
-              const active = p.name === activeList;
-              return (
-                <li key={p.id}>
-                  <Link
-                    to={`/project/${p.id}`}
-                    style={{
-                      display: "flex",
-                      justifyContent: "space-between",
-                      alignItems: "center",
-                      padding: "6px 8px",
-                      fontSize: 13,
-                      color: active ? "var(--paper)" : "rgba(255,255,255,0.75)",
-                      background: active ? "rgba(255,255,255,0.08)" : "transparent",
-                      borderRadius: 3,
-                      textDecoration: "none",
-                    }}
-                  >
-                    <span style={{ display: "flex", alignItems: "center", gap: 8, minWidth: 0 }}>
-                      <span style={{ width: 6, height: 6, borderRadius: "50%", background: p.color, flexShrink: 0 }} />
-                      <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{p.name}</span>
-                      {p.source && (
-                        <span style={{ color: "rgba(255,255,255,0.3)", flexShrink: 0 }}>
-                          <SourceIcon source={p.source} size={10} />
-                        </span>
-                      )}
-                    </span>
-                  </Link>
+          <>
+            {showProjectSearch && (
+              <input
+                value={projectFilter}
+                onChange={(e) => setProjectFilter(e.target.value)}
+                placeholder={`Search ${projects.length} projects…`}
+                style={{
+                  width: "100%",
+                  padding: "5px 8px",
+                  marginBottom: 6,
+                  background: "rgba(255,255,255,0.04)",
+                  border: "1px solid rgba(255,255,255,0.08)",
+                  borderRadius: 3,
+                  color: "var(--paper)",
+                  fontFamily: "var(--mono)",
+                  fontSize: 11,
+                  outline: "none",
+                  boxSizing: "border-box",
+                }}
+              />
+            )}
+            <ul style={{ margin: 0, padding: 0, listStyle: "none", display: "flex", flexDirection: "column", gap: 2 }}>
+              {visibleProjects.length === 0 ? (
+                <li
+                  style={{
+                    padding: "6px 8px",
+                    fontFamily: "var(--serif)",
+                    fontStyle: "italic",
+                    fontSize: 12,
+                    color: "rgba(255,255,255,0.4)",
+                  }}
+                >
+                  No match.
                 </li>
-              );
-            })}
-          </ul>
+              ) : (
+                visibleProjects.map((p) => {
+                  const active = p.name === activeList;
+                  return (
+                    <li key={p.id}>
+                      <Link
+                        to={`/project/${p.id}`}
+                        style={{
+                          display: "flex",
+                          justifyContent: "space-between",
+                          alignItems: "center",
+                          padding: "6px 8px",
+                          fontSize: 13,
+                          color: active ? "var(--paper)" : "rgba(255,255,255,0.75)",
+                          background: active ? "rgba(255,255,255,0.08)" : "transparent",
+                          borderRadius: 3,
+                          textDecoration: "none",
+                        }}
+                      >
+                        <span style={{ display: "flex", alignItems: "center", gap: 8, minWidth: 0 }}>
+                          <span style={{ width: 6, height: 6, borderRadius: "50%", background: p.color, flexShrink: 0 }} />
+                          <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{p.name}</span>
+                          {p.source && (
+                            <span style={{ color: "rgba(255,255,255,0.3)", flexShrink: 0 }}>
+                              <SourceIcon source={p.source} size={10} />
+                            </span>
+                          )}
+                        </span>
+                      </Link>
+                    </li>
+                  );
+                })
+              )}
+            </ul>
+            {hiddenProjectCount > 0 && (
+              <div
+                style={{
+                  marginTop: 6,
+                  padding: "4px 8px",
+                  fontFamily: "var(--mono)",
+                  fontSize: 10,
+                  letterSpacing: "0.06em",
+                  textTransform: "uppercase",
+                  color: "rgba(255,255,255,0.35)",
+                }}
+              >
+                + {hiddenProjectCount} more · search above
+              </div>
+            )}
+          </>
         )}
       </div>
 
@@ -355,12 +447,17 @@ export function LeftRail({ activeOverride }: Props) {
           </li>
         </ul>
       </div>
+      </div>
 
+      {/* Pinned footer — user card + AI indicator. Sits outside the
+          scrollable area so sign-out is always one click away regardless of
+          how much content is in the rail above. */}
       <div
         style={{
-          marginTop: "auto",
-          paddingTop: 16,
+          flexShrink: 0,
+          padding: "12px 20px 20px",
           borderTop: "1px solid rgba(255,255,255,0.08)",
+          background: "var(--ink)",
           display: "flex",
           flexDirection: "column",
           gap: 12,

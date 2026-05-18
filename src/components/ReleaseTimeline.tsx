@@ -1,7 +1,6 @@
 import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
-import { Link } from "react-router-dom";
+import { useNavigate } from "react-router-dom";
 import type { Release, Task } from "@shared/types";
-import { fetchChangelog } from "../api/releases";
 import {
   EMPTY_RELEASES,
   useEnsureReleasesLoaded,
@@ -28,11 +27,10 @@ export function ReleaseTimeline({ projectId }: Props) {
     useReleaseStore((s) => s.byProject.get(projectId)) ?? EMPTY_RELEASES;
   const loadStatus = useReleaseStore((s) => s.loaded.get(projectId));
   const tasks = useTaskStore((s) => s.tasks);
-  const updateRelease = useReleaseStore((s) => s.updateRelease);
-  const deleteRelease = useReleaseStore((s) => s.deleteRelease);
 
+  const navigate = useNavigate();
   const [createOpen, setCreateOpen] = useState(false);
-  const [expandedId, setExpandedId] = useState<string | null>(null);
+  const [versionFilter, setVersionFilter] = useState("");
 
   const tasksByRelease = useMemo(() => {
     const m = new Map<string, Task[]>();
@@ -45,39 +43,87 @@ export function ReleaseTimeline({ projectId }: Props) {
     return m;
   }, [tasks]);
 
-  const expanded = expandedId
-    ? releases.find((r) => r.id === expandedId) ?? null
-    : null;
+  // Two grouped sections in the sidebar:
+  //   • Upcoming      — unreleased (newest first), capped at 5
+  //   • Recently released — released (newest first), capped at 5
+  // When the user types in the search box, both caps lift and the matching
+  // results stream through (capped at 25 to keep the column tidy).
+  const MAX_PER_GROUP = 5;
+  const newestFirst = useMemo(() => [...releases].reverse(), [releases]);
+  const upcomingAll = useMemo(
+    () => newestFirst.filter((r) => !r.releasedAt),
+    [newestFirst],
+  );
+  const releasedAll = useMemo(
+    () =>
+      newestFirst
+        .filter((r) => !!r.releasedAt)
+        // Re-sort by released_at desc — semver order may not match shipping order.
+        .sort((a, b) => new Date(b.releasedAt!).getTime() - new Date(a.releasedAt!).getTime()),
+    [newestFirst],
+  );
+
+  const filterQ = versionFilter.trim().toLowerCase();
+  const matchFilter = (r: Release) =>
+    !filterQ ||
+    r.version.toLowerCase().includes(filterQ) ||
+    (r.name?.toLowerCase().includes(filterQ) ?? false);
+
+  const upcomingVisible = upcomingAll.filter(matchFilter).slice(0, filterQ ? 25 : MAX_PER_GROUP);
+  const releasedVisible = releasedAll.filter(matchFilter).slice(0, filterQ ? 25 : MAX_PER_GROUP);
+  const upcomingHidden = upcomingAll.filter(matchFilter).length - upcomingVisible.length;
+  const releasedHidden = releasedAll.filter(matchFilter).length - releasedVisible.length;
 
   return (
     <section style={{ marginBottom: 28 }}>
       <div
         style={{
           display: "flex",
-          justifyContent: "space-between",
-          alignItems: "center",
-          marginBottom: 12,
+          flexDirection: "column",
+          marginBottom: 10,
+          gap: 8,
         }}
       >
-        <SectionLabel label="Releases" />
-        <button
-          type="button"
-          onClick={() => setCreateOpen(true)}
-          style={{
-            background: "transparent",
-            border: "1px dashed var(--hairline)",
-            color: "var(--muted)",
-            padding: "4px 10px",
-            borderRadius: 3,
-            cursor: "pointer",
-            fontFamily: "var(--mono)",
-            fontSize: 10,
-            letterSpacing: "0.06em",
-            textTransform: "uppercase",
-          }}
-        >
-          + Release
-        </button>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+          <SectionLabel label="Releases" />
+          <button
+            type="button"
+            onClick={() => setCreateOpen(true)}
+            style={{
+              background: "transparent",
+              border: "1px dashed var(--hairline)",
+              color: "var(--muted)",
+              padding: "3px 8px",
+              borderRadius: 3,
+              cursor: "pointer",
+              fontFamily: "var(--mono)",
+              fontSize: 10,
+              letterSpacing: "0.06em",
+              textTransform: "uppercase",
+            }}
+          >
+            + New
+          </button>
+        </div>
+        {releases.length > MAX_PER_GROUP && (
+          <input
+            value={versionFilter}
+            onChange={(e) => setVersionFilter(e.target.value)}
+            placeholder={`Find in ${releases.length}…`}
+            style={{
+              width: "100%",
+              padding: "4px 8px",
+              background: "transparent",
+              border: "1px solid var(--hairline)",
+              borderRadius: 3,
+              color: "var(--ink)",
+              fontFamily: "var(--mono)",
+              fontSize: 11,
+              outline: "none",
+              boxSizing: "border-box",
+            }}
+          />
+        )}
       </div>
 
       {loadStatus === "loading" && releases.length === 0 ? (
@@ -95,26 +141,41 @@ export function ReleaseTimeline({ projectId }: Props) {
         </div>
       ) : releases.length === 0 ? (
         <EmptyTimeline onCreate={() => setCreateOpen(true)} />
-      ) : (
-        <TimelineStrip
-          releases={releases}
-          tasksByRelease={tasksByRelease}
-          expandedId={expandedId}
-          onSelect={(id) => setExpandedId((prev) => (prev === id ? null : id))}
-        />
-      )}
-
-      {expanded && (
-        <ReleaseCard
-          release={expanded}
-          tasks={tasksByRelease.get(expanded.id) ?? []}
-          onUpdate={(input) => updateRelease(expanded.id, input)}
-          onDelete={async () => {
-            if (!confirm(`Delete release ${expanded.version}? Tasks will be unassigned.`)) return;
-            await deleteRelease(expanded.id);
-            setExpandedId(null);
+      ) : upcomingVisible.length === 0 && releasedVisible.length === 0 ? (
+        <p
+          style={{
+            fontFamily: "var(--serif)",
+            fontStyle: "italic",
+            fontSize: 14,
+            color: "var(--muted)",
+            margin: "8px 0 0",
           }}
-        />
+        >
+          {filterQ
+            ? `No release matches "${versionFilter}".`
+            : `No matching releases.`}
+        </p>
+      ) : (
+        <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+          {upcomingVisible.length > 0 && (
+            <ReleaseGroup
+              label="Upcoming"
+              releases={upcomingVisible}
+              tasksByRelease={tasksByRelease}
+              onSelect={(id) => navigate(`/release/${id}`)}
+              hiddenCount={upcomingHidden}
+            />
+          )}
+          {releasedVisible.length > 0 && (
+            <ReleaseGroup
+              label="Recently released"
+              releases={releasedVisible}
+              tasksByRelease={tasksByRelease}
+              onSelect={(id) => navigate(`/release/${id}`)}
+              hiddenCount={releasedHidden}
+            />
+          )}
+        </div>
       )}
 
       {createOpen && (
@@ -123,7 +184,7 @@ export function ReleaseTimeline({ projectId }: Props) {
           existingVersions={releases.map((r) => r.version)}
           onClose={(createdId) => {
             setCreateOpen(false);
-            if (createdId) setExpandedId(createdId);
+            if (createdId) navigate(`/release/${createdId}`);
           }}
         />
       )}
@@ -167,22 +228,60 @@ function EmptyTimeline({ onCreate }: { onCreate: () => void }) {
 interface StripProps {
   releases: Release[];
   tasksByRelease: Map<string, Task[]>;
-  expandedId: string | null;
   onSelect: (id: string) => void;
 }
 
-function TimelineStrip({ releases, tasksByRelease, expandedId, onSelect }: StripProps) {
+interface GroupProps extends StripProps {
+  label: string;
+  hiddenCount: number;
+}
+
+function ReleaseGroup({ label, hiddenCount, ...stripProps }: GroupProps) {
   return (
-    <div
+    <div>
+      <div
+        style={{
+          fontFamily: "var(--mono)",
+          fontSize: 9,
+          letterSpacing: "0.1em",
+          textTransform: "uppercase",
+          color: "var(--muted)",
+          marginBottom: 6,
+        }}
+      >
+        {label}
+      </div>
+      <TimelineStrip {...stripProps} />
+      {hiddenCount > 0 && (
+        <div
+          style={{
+            marginTop: 4,
+            fontFamily: "var(--mono)",
+            fontSize: 9,
+            letterSpacing: "0.06em",
+            textTransform: "uppercase",
+            color: "var(--muted)",
+          }}
+        >
+          + {hiddenCount} more · search above
+        </div>
+      )}
+    </div>
+  );
+}
+
+function TimelineStrip({ releases, tasksByRelease, onSelect }: StripProps) {
+  return (
+    <ul
       style={{
+        margin: 0,
+        padding: 0,
+        listStyle: "none",
         display: "flex",
-        alignItems: "stretch",
-        gap: 0,
-        overflowX: "auto",
-        padding: "8px 4px 14px",
-        borderTop: "1px solid var(--hairline)",
-        borderBottom: "1px solid var(--hairline)",
-        position: "relative",
+        flexDirection: "column",
+        border: "1px solid var(--hairline)",
+        borderRadius: 3,
+        overflow: "hidden",
       }}
     >
       {releases.map((r, i) => {
@@ -195,395 +294,111 @@ function TimelineStrip({ releases, tasksByRelease, expandedId, onSelect }: Strip
           : inProgress
             ? "var(--accent)"
             : "var(--muted)";
-        const active = r.id === expandedId;
 
         return (
-          <button
-            key={r.id}
-            type="button"
-            onClick={() => onSelect(r.id)}
-            style={{
-              flex: "0 0 auto",
-              minWidth: 130,
-              display: "flex",
-              flexDirection: "column",
-              alignItems: "flex-start",
-              padding: "10px 14px",
-              border: "none",
-              borderRight:
-                i < releases.length - 1 ? "1px solid var(--hairline)" : "none",
-              background: active
-                ? "color-mix(in oklch, var(--accent) 6%, var(--paper))"
-                : "transparent",
-              cursor: "pointer",
-              textAlign: "left",
-              position: "relative",
-            }}
-            aria-pressed={active}
-          >
-            <div
+          <li key={r.id}>
+            <button
+              type="button"
+              onClick={() => onSelect(r.id)}
               style={{
+                width: "100%",
                 display: "flex",
                 alignItems: "center",
                 gap: 8,
-                marginBottom: 4,
+                padding: "8px 10px",
+                border: "none",
+                borderTop: i === 0 ? "none" : "1px solid var(--hairline)",
+                background: "transparent",
+                cursor: "pointer",
+                textAlign: "left",
+                fontFamily: "var(--ui)",
+                minWidth: 0,
+                boxSizing: "border-box",
               }}
             >
               <span
                 style={{
-                  width: 8,
-                  height: 8,
+                  width: 7,
+                  height: 7,
                   borderRadius: "50%",
                   background: dotColor,
+                  flexShrink: 0,
                 }}
               />
+              {/* Title cluster (version + codename) — flexes, truncates with ellipsis */}
               <span
                 style={{
-                  fontFamily: "var(--mono)",
-                  fontSize: 12,
-                  letterSpacing: "0.04em",
-                  color: "var(--ink)",
-                }}
-              >
-                {r.version}
-              </span>
-            </div>
-            {r.name && (
-              <span
-                style={{
-                  fontFamily: "var(--serif)",
-                  fontStyle: "italic",
-                  fontSize: 13,
-                  color: "var(--ink)",
-                  lineHeight: 1.2,
-                  marginBottom: 4,
-                }}
-              >
-                {r.name}
-              </span>
-            )}
-            <span
-              style={{
-                fontFamily: "var(--mono)",
-                fontSize: 9,
-                letterSpacing: "0.06em",
-                textTransform: "uppercase",
-                color: dotColor,
-              }}
-            >
-              {released
-                ? `Released ${formatDate(r.releasedAt!)}`
-                : inProgress
-                  ? `In progress · ${done}/${tasks.length}`
-                  : "Planned"}
-            </span>
-          </button>
-        );
-      })}
-    </div>
-  );
-}
-
-function formatDate(iso: string): string {
-  const d = new Date(iso);
-  return d.toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" });
-}
-
-interface CardProps {
-  release: Release;
-  tasks: Task[];
-  onUpdate: (input: {
-    version?: string;
-    name?: string | null;
-    notes?: string;
-    releasedAt?: string | null;
-  }) => Promise<void>;
-  onDelete: () => Promise<void>;
-}
-
-function ReleaseCard({ release, tasks, onUpdate, onDelete }: CardProps) {
-  const [editingNotes, setEditingNotes] = useState(false);
-  const [draftNotes, setDraftNotes] = useState(release.notes);
-  const notesRef = useRef<HTMLTextAreaElement>(null);
-
-  useEffect(() => {
-    if (editingNotes) {
-      setDraftNotes(release.notes);
-      window.requestAnimationFrame(() => notesRef.current?.focus());
-    }
-  }, [editingNotes, release.notes]);
-
-  const [copyState, setCopyState] = useState<"idle" | "copied" | "failed">("idle");
-  const onCopyMarkdown = async () => {
-    try {
-      const { markdown } = await fetchChangelog(release.id);
-      await navigator.clipboard.writeText(markdown);
-      setCopyState("copied");
-      window.setTimeout(() => setCopyState("idle"), 1600);
-    } catch (e) {
-      console.error("Copy changelog failed:", e);
-      setCopyState("failed");
-      window.setTimeout(() => setCopyState("idle"), 1600);
-    }
-  };
-
-  const released = !!release.releasedAt;
-  const totalDone = tasks.filter((t) => t.status === "done").length;
-
-  const toggleReleased = async () => {
-    if (released) {
-      if (!confirm(`Mark ${release.version} as planned again?`)) return;
-      await onUpdate({ releasedAt: null });
-    } else {
-      await onUpdate({ releasedAt: new Date().toISOString() });
-    }
-  };
-
-  const commitNotes = async () => {
-    setEditingNotes(false);
-    if (draftNotes !== release.notes) {
-      await onUpdate({ notes: draftNotes });
-    }
-  };
-
-  return (
-    <div
-      style={{
-        marginTop: 14,
-        padding: "20px 22px",
-        background: "var(--paper)",
-        border: "1px solid var(--hairline)",
-        borderRadius: 4,
-        boxShadow: "0 2px 8px rgba(0,0,0,0.04)",
-      }}
-    >
-      <div
-        style={{
-          display: "flex",
-          justifyContent: "space-between",
-          alignItems: "flex-start",
-          gap: 16,
-          marginBottom: 14,
-        }}
-      >
-        <div>
-          <div
-            style={{
-              fontFamily: "var(--mono)",
-              fontSize: 10,
-              letterSpacing: "0.08em",
-              textTransform: "uppercase",
-              color: released ? "#2d7a4c" : "var(--accent)",
-              marginBottom: 4,
-            }}
-          >
-            {released ? `Released ${formatDate(release.releasedAt!)}` : "Planned"}
-          </div>
-          <h3
-            style={{
-              fontFamily: "var(--serif)",
-              fontWeight: 400,
-              fontSize: 26,
-              lineHeight: 1.1,
-              margin: 0,
-              letterSpacing: "-0.01em",
-            }}
-          >
-            {release.version}
-            {release.name && (
-              <em style={{ fontStyle: "italic", color: "var(--muted)" }}> · {release.name}</em>
-            )}
-          </h3>
-        </div>
-        <div style={{ display: "flex", gap: 6, flexShrink: 0 }}>
-          <button
-            type="button"
-            onClick={onCopyMarkdown}
-            style={{
-              background: copyState === "copied" ? "var(--accent)" : "transparent",
-              border: "1px solid color-mix(in oklch, var(--accent) 30%, transparent)",
-              color: copyState === "copied" ? "var(--paper)" : "var(--accent)",
-              padding: "4px 10px",
-              borderRadius: 3,
-              fontFamily: "var(--mono)",
-              fontSize: 10,
-              letterSpacing: "0.06em",
-              textTransform: "uppercase",
-              cursor: "pointer",
-              transition: "background 120ms ease-out",
-            }}
-            title="Copy changelog markdown to clipboard."
-          >
-            {copyState === "copied"
-              ? "✓ Copied"
-              : copyState === "failed"
-                ? "Copy failed"
-                : "Copy changelog"}
-          </button>
-          <button type="button" onClick={toggleReleased} style={btnGhost}>
-            {released ? "Mark planned" : "Mark released"}
-          </button>
-          <button
-            type="button"
-            onClick={onDelete}
-            style={{ ...btnGhost, color: "var(--muted)" }}
-          >
-            Delete
-          </button>
-        </div>
-      </div>
-
-      {editingNotes ? (
-        <textarea
-          ref={notesRef}
-          value={draftNotes}
-          onChange={(e) => setDraftNotes(e.target.value)}
-          onBlur={commitNotes}
-          onKeyDown={(e) => {
-            if (e.key === "Escape") {
-              e.preventDefault();
-              setEditingNotes(false);
-            } else if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
-              e.preventDefault();
-              void commitNotes();
-            }
-          }}
-          placeholder="Narrative notes — context, theme, anything worth saying about this release."
-          rows={3}
-          style={{
-            width: "100%",
-            fontFamily: "var(--serif)",
-            fontStyle: "italic",
-            fontSize: 15,
-            lineHeight: 1.55,
-            color: "var(--ink)",
-            background: "transparent",
-            border: "1px solid var(--hairline)",
-            borderRadius: 4,
-            outline: "none",
-            padding: 10,
-            resize: "vertical",
-            marginBottom: 16,
-          }}
-        />
-      ) : (
-        <p
-          onClick={() => setEditingNotes(true)}
-          style={{
-            fontFamily: "var(--serif)",
-            fontStyle: "italic",
-            fontSize: 15,
-            lineHeight: 1.55,
-            color: release.notes ? "var(--ink)" : "var(--muted)",
-            margin: "0 0 16px",
-            cursor: "text",
-            whiteSpace: "pre-wrap",
-            minHeight: 24,
-          }}
-        >
-          {release.notes || "Click to add narrative notes — theme, callouts, anything worth saying."}
-        </p>
-      )}
-
-      <div
-        style={{
-          fontFamily: "var(--mono)",
-          fontSize: 10,
-          letterSpacing: "0.08em",
-          textTransform: "uppercase",
-          color: "var(--muted)",
-          marginBottom: 8,
-        }}
-      >
-        Items in this release · {totalDone}/{tasks.length} done
-      </div>
-      {tasks.length === 0 ? (
-        <p
-          style={{
-            fontFamily: "var(--serif)",
-            fontStyle: "italic",
-            color: "var(--muted)",
-            fontSize: 13,
-            margin: 0,
-          }}
-        >
-          No tasks tagged yet. Open a task and pick this release in the right column.
-        </p>
-      ) : (
-        <ul style={{ margin: 0, padding: 0, listStyle: "none" }}>
-          {tasks.map((t) => (
-            <li
-              key={t.id}
-              style={{
-                display: "grid",
-                gridTemplateColumns: "auto 1fr auto",
-                gap: 12,
-                padding: "8px 0",
-                borderBottom: "1px dotted var(--hairline)",
-                alignItems: "center",
-              }}
-            >
-              <span
-                style={{
-                  width: 14,
-                  height: 14,
-                  borderRadius: "50%",
-                  background: t.status === "done" ? "#2d7a4c" : "transparent",
-                  border:
-                    t.status === "done" ? "none" : "1.5px solid var(--hairline)",
+                  flex: 1,
+                  minWidth: 0,
                   display: "flex",
-                  alignItems: "center",
-                  justifyContent: "center",
-                  color: "var(--paper)",
-                  fontSize: 9,
-                  fontFamily: "var(--mono)",
+                  alignItems: "baseline",
+                  gap: 6,
+                  overflow: "hidden",
                 }}
               >
-                {t.status === "done" ? "✓" : ""}
-              </span>
-              <Link
-                to={`/task/${t.id}`}
-                style={{
-                  textDecoration: "none",
-                  color: "var(--ink)",
-                  display: "block",
-                }}
-              >
-                <div style={{ fontSize: 14, lineHeight: 1.3 }}>
-                  {t.clientDescription.trim() || t.title}
-                </div>
-                {t.clientDescription.trim() && (
-                  <div
+                <span
+                  style={{
+                    fontFamily: "var(--mono)",
+                    fontSize: 12,
+                    letterSpacing: "0.04em",
+                    color: "var(--ink)",
+                    flexShrink: 0,
+                  }}
+                >
+                  {r.version}
+                </span>
+                {r.name && (
+                  <span
                     style={{
-                      fontFamily: "var(--mono)",
-                      fontSize: 10,
+                      fontFamily: "var(--serif)",
+                      fontStyle: "italic",
+                      fontSize: 12,
                       color: "var(--muted)",
-                      letterSpacing: "0.04em",
-                      marginTop: 2,
+                      overflow: "hidden",
+                      textOverflow: "ellipsis",
+                      whiteSpace: "nowrap",
+                      minWidth: 0,
                     }}
                   >
-                    Internal: {t.title}
-                  </div>
+                    {r.name}
+                  </span>
                 )}
-              </Link>
+              </span>
+              {/* Status tag — fixed-narrow column on the right, never wraps */}
               <span
                 style={{
                   fontFamily: "var(--mono)",
-                  fontSize: 10,
-                  letterSpacing: "0.05em",
-                  color: "var(--muted)",
+                  fontSize: 9,
+                  letterSpacing: "0.06em",
                   textTransform: "uppercase",
+                  color: dotColor,
+                  textAlign: "right",
+                  flexShrink: 0,
+                  whiteSpace: "nowrap",
                 }}
               >
-                {t.priority}
+                {released
+                  ? shortDate(r.releasedAt!)
+                  : inProgress
+                    ? `${done}/${tasks.length}`
+                    : "Planned"}
               </span>
-            </li>
-          ))}
-        </ul>
-      )}
-    </div>
+            </button>
+          </li>
+        );
+      })}
+    </ul>
   );
 }
+
+/** Compact date for the sidebar row (e.g. "Jun 4"). The expanded card uses
+ *  the longer form via `formatDate`. */
+function shortDate(iso: string): string {
+  const d = new Date(iso);
+  return d.toLocaleDateString(undefined, { month: "short", day: "numeric" });
+}
+
+
 
 interface CreateModalProps {
   projectId: string;

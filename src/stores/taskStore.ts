@@ -99,26 +99,43 @@ export const useTaskStore = create<TaskState>((set, get) => {
     return get().tasks.map((t) => (t.id === id ? { ...t, ...patch, updatedAt: now } : t));
   }
 
-  /** Generic slice loader. Skips if the slice has already been loaded
-   *  (idempotent — the views' ensure-hooks fire on every mount). */
+  /** Per-key in-flight tracking. Multiple slices can load concurrently —
+   *  the previous single `status === "loading"` mutex blocked them, which is
+   *  why Next/Waiting/Someday silently failed to load when fired in parallel
+   *  with Today. */
+  const inflight = new Map<string, Promise<void>>();
+
+  /** Generic slice loader. Idempotent per slice key — repeat calls for the
+   *  same key return the in-flight promise (or fast-return if already loaded).
+   *  Independent keys load concurrently. */
   async function loadSlice(
     key: string,
     fetch: () => Promise<{ tasks: Task[]; nextCursor: string | null }>,
   ): Promise<void> {
     if (get().loadedSlices.has(key)) return;
-    if (get().status === "loading") return;
-    set({ status: "loading", error: null });
-    try {
-      const { tasks, nextCursor } = await fetch();
-      const merged = mergeTasks(get().tasks, tasks);
-      const loaded = new Set(get().loadedSlices);
-      loaded.add(key);
-      const cursors = new Map(get().cursors);
-      cursors.set(key, nextCursor);
-      set({ status: "ready", tasks: merged, loadedSlices: loaded, cursors });
-    } catch (e) {
-      set({ status: "error", error: e instanceof Error ? e.message : String(e) });
-    }
+    const existing = inflight.get(key);
+    if (existing) return existing;
+    const promise = (async () => {
+      // Flip the global status to "loading" only if nothing's loaded yet —
+      // this drives the initial loading spinner without blocking later
+      // per-slice loads.
+      if (get().status === "idle") set({ status: "loading", error: null });
+      try {
+        const { tasks, nextCursor } = await fetch();
+        const merged = mergeTasks(get().tasks, tasks);
+        const loaded = new Set(get().loadedSlices);
+        loaded.add(key);
+        const cursors = new Map(get().cursors);
+        cursors.set(key, nextCursor);
+        set({ status: "ready", tasks: merged, loadedSlices: loaded, cursors });
+      } catch (e) {
+        set({ status: "error", error: e instanceof Error ? e.message : String(e) });
+      } finally {
+        inflight.delete(key);
+      }
+    })();
+    inflight.set(key, promise);
+    return promise;
   }
 
   return {
@@ -163,14 +180,16 @@ export const useTaskStore = create<TaskState>((set, get) => {
       }
     },
 
-    reset: () =>
+    reset: () => {
+      inflight.clear();
       set({
         status: "idle",
         error: null,
         tasks: [],
         loadedSlices: new Set(),
         cursors: new Map(),
-      }),
+      });
+    },
 
     appendTask: (task) => {
       // Avoid dupes if we somehow append a task we already have.

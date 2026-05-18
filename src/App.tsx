@@ -34,6 +34,9 @@ const SomedayView = lazy(() =>
 const TaskDetailView = lazy(() =>
   import("./views/TaskDetailView").then((m) => ({ default: m.TaskDetailView })),
 );
+const ReleaseDetailView = lazy(() =>
+  import("./views/ReleaseDetailView").then((m) => ({ default: m.ReleaseDetailView })),
+);
 const WeekView = lazy(() =>
   import("./views/WeekView").then((m) => ({ default: m.WeekView })),
 );
@@ -94,6 +97,7 @@ function AuthedApp() {
         <Route path="/someday" element={<Lazy><SomedayView /></Lazy>} />
         <Route path="/project/:id" element={<Lazy><ProjectView /></Lazy>} />
         <Route path="/task/:id" element={<Lazy><TaskDetailView /></Lazy>} />
+        <Route path="/release/:id" element={<Lazy><ReleaseDetailView /></Lazy>} />
         <Route path="/calendar" element={<Lazy><WeekView /></Lazy>} />
         <Route path="/review" element={<Lazy><WeeklyReviewView /></Lazy>} />
         <Route path="*" element={<TodayView />} />

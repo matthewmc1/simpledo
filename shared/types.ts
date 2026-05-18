@@ -58,6 +58,9 @@ export const TaskSchema = z.object({
   dueText: z.string().nullable(),
   projectId: z.string().nullable(),
   releaseId: z.string().nullable(),
+  /** Last release this task was tagged to before being moved. Lets a release
+   *  detail page show "items originally planned but moved out". */
+  previousReleaseId: z.string().nullable(),
   clientDescription: z.string(),
   integration: z.string().nullable(),
   integrationId: z.string().nullable(),
@@ -80,6 +83,8 @@ export const ReleaseSchema = z.object({
   name: z.string().nullable(),
   notes: z.string(),
   releasedAt: z.string().nullable(),
+  /** Optional customer tags — who was waiting for this release. */
+  customers: z.array(z.string()),
   createdAt: z.string(),
   updatedAt: z.string(),
 });
@@ -92,6 +97,7 @@ export const CreateReleaseInputSchema = z.object({
   name: z.string().max(120).optional(),
   notes: z.string().max(5000).optional(),
   releasedAt: z.string().datetime().nullable().optional(),
+  customers: z.array(z.string().min(1).max(120)).max(50).optional(),
 });
 export type CreateReleaseInput = z.infer<typeof CreateReleaseInputSchema>;
 
@@ -101,6 +107,7 @@ export const UpdateReleaseInputSchema = z
     name: z.string().max(120).nullable(),
     notes: z.string().max(5000),
     releasedAt: z.string().datetime().nullable(),
+    customers: z.array(z.string().min(1).max(120)).max(50),
   })
   .partial();
 export type UpdateReleaseInput = z.infer<typeof UpdateReleaseInputSchema>;

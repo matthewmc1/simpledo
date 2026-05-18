@@ -1,5 +1,4 @@
 import { useEffect, useRef, useState } from "react";
-import { useHotkeys } from "react-hotkeys-hook";
 import { Link, useNavigate } from "react-router-dom";
 import { searchTasks, type SearchHit } from "../api/tasks";
 import { useProjectStore } from "../stores/projectStore";
@@ -18,16 +17,25 @@ export function CommandPalette() {
   const navigate = useNavigate();
   const projects = useProjectStore((s) => s.projects);
 
-  // ⌘P / Ctrl+P opens. Browsers swallow ⌘P for "Print" — preventDefault is
-  // best-effort but reliable on the modern stack.
-  useHotkeys(
-    "mod+p",
-    (e) => {
+  // ⌘P / Ctrl+P opens. We register a window-level *capture-phase* listener
+  // so we beat the browser's print accelerator. Bubble-phase listeners
+  // (which is what react-hotkeys-hook uses) fire after the browser default
+  // on some platforms, so we'd lose the race and the print dialog would
+  // open anyway.
+  useEffect(() => {
+    const onKeyDown = (e: KeyboardEvent) => {
+      const isMod = e.metaKey || e.ctrlKey;
+      if (!isMod) return;
+      // Match `p`/`P` without modifier confusion (alt+p would otherwise fire too).
+      if (e.key !== "p" && e.key !== "P") return;
+      if (e.altKey) return;
       e.preventDefault();
-      setOpen(true);
-    },
-    { enableOnFormTags: true, enableOnContentEditable: true },
-  );
+      e.stopPropagation();
+      setOpen((v) => !v);
+    };
+    window.addEventListener("keydown", onKeyDown, { capture: true });
+    return () => window.removeEventListener("keydown", onKeyDown, { capture: true });
+  }, []);
 
   useEffect(() => {
     if (open) {

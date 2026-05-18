@@ -47,3 +47,26 @@ export async function fetchChangelog(
     `/api/releases/${releaseId}/changelog`,
   );
 }
+
+export interface ReleaseDetailTask {
+  id: string;
+  title: string;
+  status: string;
+  priority: string;
+  projectId: string | null;
+  releaseId: string | null;
+  previousReleaseId: string | null;
+  clientDescription: string;
+  dueText: string | null;
+  updatedAt: string;
+}
+
+export interface ReleaseDetail {
+  release: Release;
+  tasks: ReleaseDetailTask[];
+  movedOut: ReleaseDetailTask[];
+}
+
+export async function fetchRelease(releaseId: string): Promise<ReleaseDetail> {
+  return apiGet<ReleaseDetail>(`/api/releases/${releaseId}`);
+}

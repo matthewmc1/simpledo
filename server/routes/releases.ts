@@ -17,6 +17,7 @@ const RELEASE_COLS = {
   name: release.name,
   notes: release.notes,
   releasedAt: release.releasedAt,
+  customers: release.customers,
   createdAt: release.createdAt,
   updatedAt: release.updatedAt,
 } as const;
@@ -101,10 +102,61 @@ router.post("/projects/:projectId/releases", async (c) => {
       name: parsed.data.name ?? null,
       notes: parsed.data.notes ?? "",
       releasedAt: parsed.data.releasedAt ? new Date(parsed.data.releasedAt) : null,
+      customers: parsed.data.customers ?? [],
     })
     .returning(RELEASE_COLS);
 
   return c.json({ release: created });
+});
+
+/** Release detail: the release row + tasks currently tagged to it +
+ *  tasks that *were* tagged to it but have since moved elsewhere. */
+router.get("/releases/:id", async (c) => {
+  const user = requireUser(c);
+  const id = c.req.param("id");
+  await assertReleaseOwner(id, user.id);
+
+  const [rel] = await db.select(RELEASE_COLS).from(release).where(eq(release.id, id));
+  if (!rel) throw new HTTPError(404, "Release not found");
+
+  const taskCols = {
+    id: task.id,
+    title: task.title,
+    status: task.status,
+    priority: task.priority,
+    projectId: task.projectId,
+    releaseId: task.releaseId,
+    previousReleaseId: task.previousReleaseId,
+    clientDescription: task.clientDescription,
+    dueText: task.dueText,
+    updatedAt: task.updatedAt,
+  } as const;
+
+  const current = await db
+    .select(taskCols)
+    .from(task)
+    .where(and(eq(task.userId, user.id), eq(task.releaseId, id)))
+    .orderBy(task.priority, task.createdAt);
+
+  // Items that *used to* live in this release but got moved. By definition
+  // these have a different (or null) current releaseId.
+  const movedOut = await db
+    .select(taskCols)
+    .from(task)
+    .where(
+      and(
+        eq(task.userId, user.id),
+        eq(task.previousReleaseId, id),
+        // Exclude tasks that came back to this release (would be a no-op move).
+        // Drizzle's `ne` works fine with nullable columns here.
+        // Note: a task with releaseId=null AND previousReleaseId=id is a
+        // dropped-from-release case — still shown as moved out.
+      ),
+    )
+    .orderBy(task.updatedAt);
+  const movedOutFiltered = movedOut.filter((t) => t.releaseId !== id);
+
+  return c.json({ release: rel, tasks: current, movedOut: movedOutFiltered });
 });
 
 router.patch("/releases/:id", async (c) => {

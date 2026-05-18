@@ -57,6 +57,7 @@ router.get("/tasks", async (c) => {
       dueText: task.dueText,
       projectId: task.projectId,
       releaseId: task.releaseId,
+      previousReleaseId: task.previousReleaseId,
       clientDescription: task.clientDescription,
       integration: task.integration,
       integrationId: task.integrationId,
@@ -157,6 +158,7 @@ router.post("/tasks", async (c) => {
       dueText: task.dueText,
       projectId: task.projectId,
       releaseId: task.releaseId,
+      previousReleaseId: task.previousReleaseId,
       clientDescription: task.clientDescription,
       integration: task.integration,
       integrationId: task.integrationId,
@@ -175,8 +177,25 @@ router.patch("/tasks/:id", async (c) => {
   if (!parsed.success) throw new HTTPError(400, "Invalid task update");
   if (Object.keys(parsed.data).length === 0) throw new HTTPError(400, "No fields to update");
 
+  // If the caller is changing `releaseId`, auto-record where the task came
+  // from so the release detail page can show "items that were originally
+  // here but moved out". Skip when the new value equals the existing one
+  // (no-op) — read the current row first.
+  let previousReleaseUpdate: { previousReleaseId?: string | null } = {};
+  if ("releaseId" in parsed.data) {
+    const [current] = await db
+      .select({ releaseId: task.releaseId })
+      .from(task)
+      .where(and(eq(task.id, id), eq(task.userId, user.id)))
+      .limit(1);
+    if (current && current.releaseId !== parsed.data.releaseId) {
+      previousReleaseUpdate = { previousReleaseId: current.releaseId };
+    }
+  }
+
   const updates = {
     ...parsed.data,
+    ...previousReleaseUpdate,
     // Convert ISO string back to Date for the timestamp column.
     due: parsed.data.due === undefined ? undefined : parsed.data.due === null ? null : new Date(parsed.data.due),
     updatedAt: new Date(),
@@ -196,6 +215,7 @@ router.patch("/tasks/:id", async (c) => {
       dueText: task.dueText,
       projectId: task.projectId,
       releaseId: task.releaseId,
+      previousReleaseId: task.previousReleaseId,
       clientDescription: task.clientDescription,
       integration: task.integration,
       integrationId: task.integrationId,

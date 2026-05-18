@@ -1,7 +1,7 @@
 import { Hono } from "hono";
 import { and, eq } from "drizzle-orm";
 import { db } from "../db/client";
-import { project } from "../db/schema";
+import { project, task } from "../db/schema";
 import { HTTPError, requireUser, type Env } from "../middleware/session";
 import {
   CreateProjectInputSchema,
@@ -70,15 +70,41 @@ router.patch("/projects/:id", async (c) => {
   return c.json({ project: rows[0] });
 });
 
+/** Deletes the project AND all tasks belonging to it.
+ *
+ *  The `task.project_id` FK is `ON DELETE SET NULL` so deleting the project
+ *  alone would orphan the tasks (lose their project tag) but keep them in
+ *  the user's library. Per product spec, projects own their tasks — when
+ *  the user removes a project they expect the tasks to go too. We do this
+ *  at the application level (rather than changing FKs) so it's explicit and
+ *  reversible: pass `?keepTasks=true` to recover the old "orphan, don't
+ *  delete" behaviour.
+ */
 router.delete("/projects/:id", async (c) => {
   const user = requireUser(c);
   const id = c.req.param("id");
-  const rows = await db
-    .delete(project)
+  const keepTasks = c.req.query("keepTasks") === "true";
+
+  // Ownership check first so we can return 404 cleanly even when there are
+  // no tasks.
+  const owned = await db
+    .select({ id: project.id })
+    .from(project)
     .where(and(eq(project.id, id), eq(project.userId, user.id)))
-    .returning({ id: project.id });
-  if (rows.length === 0) throw new HTTPError(404, "Project not found");
-  return c.json({ ok: true });
+    .limit(1);
+  if (owned.length === 0) throw new HTTPError(404, "Project not found");
+
+  let deletedTasks = 0;
+  if (!keepTasks) {
+    const taskRows = await db
+      .delete(task)
+      .where(and(eq(task.projectId, id), eq(task.userId, user.id)))
+      .returning({ id: task.id });
+    deletedTasks = taskRows.length;
+  }
+
+  await db.delete(project).where(eq(project.id, id));
+  return c.json({ ok: true, deletedTasks });
 });
 
 export const projectRoutes = router;

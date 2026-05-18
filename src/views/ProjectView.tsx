@@ -163,10 +163,21 @@ export function ProjectView() {
     void updateProject(project.id, { color: next });
   };
 
-  const onDeleteProject = async () => {
-    if (!confirm(`Delete "${project.name}"? Tasks under it will keep existing but lose their project label.`)) {
+  const onArchiveProject = async () => {
+    const next = !project.archived;
+    if (next && !confirm(`Archive "${project.name}"? It'll be hidden from the sidebar but tasks stay put. You can unarchive any time.`)) {
       return;
     }
+    await updateProject(project.id, { archived: next });
+    if (next) navigate("/");
+  };
+
+  const onDeleteProject = async () => {
+    const totalCount = projectTasks.length;
+    const msg = totalCount > 0
+      ? `Delete "${project.name}" and all ${totalCount} task${totalCount === 1 ? "" : "s"} inside it? This can't be undone.`
+      : `Delete "${project.name}"? This can't be undone.`;
+    if (!confirm(msg)) return;
     await deleteProject(project.id);
     navigate("/");
   };
@@ -235,7 +246,10 @@ export function ProjectView() {
             <button onClick={() => openCreate(true)} style={btnGhost}>
               + Project
             </button>
-            <button onClick={onDeleteProject} style={{ ...btnGhost, color: "var(--muted)" }}>
+            <button onClick={onArchiveProject} style={{ ...btnGhost, color: "var(--muted)" }}>
+              {project.archived ? "Unarchive" : "Archive"}
+            </button>
+            <button onClick={onDeleteProject} style={{ ...btnGhost, color: "var(--accent)", borderColor: "var(--accent)" }}>
               Delete
             </button>
             <button style={btnPrimary} onClick={() => setQuickAddOpen((v) => !v)}>
@@ -331,8 +345,6 @@ export function ProjectView() {
             </div>
           </section>
 
-          <ReleaseTimeline projectId={project.id} />
-
           {quickAddOpen && (
             <div
               style={{
@@ -391,11 +403,16 @@ export function ProjectView() {
             <TaskGroup label="Waiting on others" tasks={groups.waiting} onToggle={toggleDone} />
           )}
           {groups.done.length > 0 && (
-            <TaskGroup label="Done · this week" tasks={groups.done} onToggle={toggleDone} muted />
+            <CollapsibleTaskGroup
+              label="Done · this week"
+              tasks={groups.done}
+              onToggle={toggleDone}
+              muted
+            />
           )}
         </div>
 
-        <aside style={{ display: "flex", flexDirection: "column", gap: 24 }}>
+        <aside style={{ display: "flex", flexDirection: "column", gap: 24, minWidth: 0 }}>
           <div
             style={{
               padding: "14px 16px",
@@ -413,7 +430,7 @@ export function ProjectView() {
                 marginBottom: 6,
               }}
             >
-              About this project
+              Linked items
             </div>
             <p
               style={{
@@ -425,10 +442,11 @@ export function ProjectView() {
                 color: "var(--ink)",
               }}
             >
-              Capture tasks anywhere and tag them with this project to see them here. Linked items
-              from Linear/Jira/Gmail will land in this column once integrations ship.
+              Issues and conversations from Linear, Jira, Gmail and Slack will land here once
+              integrations ship.
             </p>
           </div>
+          <ReleaseTimeline projectId={project.id} />
         </aside>
       </div>
     </BriefingShell>
@@ -486,11 +504,68 @@ interface GroupProps {
   emptyHint?: string;
 }
 
-function TaskGroup({ label, tasks, onToggle, muted, emptyHint }: GroupProps) {
+/** Closed-by-default variant for high-volume task groups (e.g. completed
+ *  tasks). At scale the project can have thousands of done rows — rendering
+ *  them collapsed avoids the extra DOM/layout cost until the user actually
+ *  wants to see history. */
+function CollapsibleTaskGroup(props: GroupProps) {
+  const [open, setOpen] = useState(false);
+  return (
+    <section style={{ marginBottom: 28, opacity: props.muted ? 0.7 : 1 }}>
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        aria-expanded={open}
+        style={{
+          width: "100%",
+          background: "transparent",
+          border: "none",
+          padding: 0,
+          marginBottom: 10,
+          display: "flex",
+          alignItems: "center",
+          gap: 8,
+          cursor: "pointer",
+          fontFamily: "var(--mono)",
+          fontSize: 10,
+          letterSpacing: "0.12em",
+          textTransform: "uppercase",
+          color: "var(--muted)",
+        }}
+      >
+        <span aria-hidden="true" style={{ width: 10, textAlign: "center" }}>
+          {open ? "▾" : "▸"}
+        </span>
+        <span>
+          {props.label} · {props.tasks.length}
+        </span>
+      </button>
+      {open && (
+        <TaskGroup
+          label={props.label}
+          tasks={props.tasks}
+          onToggle={props.onToggle}
+          muted={props.muted}
+          // We render our own toggle header; suppress the inner label.
+          hideHeader
+        />
+      )}
+    </section>
+  );
+}
+
+function TaskGroup({
+  label,
+  tasks,
+  onToggle,
+  muted,
+  emptyHint,
+  hideHeader,
+}: GroupProps & { hideHeader?: boolean }) {
   if (tasks.length === 0 && !emptyHint) return null;
   return (
     <section style={{ marginBottom: 28, opacity: muted ? 0.7 : 1 }}>
-      <SectionLabel label={`${label} · ${tasks.length}`} />
+      {!hideHeader && <SectionLabel label={`${label} · ${tasks.length}`} />}
       {tasks.length === 0 ? (
         <div
           style={{

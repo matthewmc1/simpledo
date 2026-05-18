@@ -62,7 +62,17 @@ export function VirtualList<T>({
   return (
     <div
       ref={parentRef}
-      style={{ ...style, overflowY: "auto", maxHeight, contain: "strict" }}
+      style={{
+        ...style,
+        overflowY: "auto",
+        // Use `height` (not `maxHeight`) so the scroll container is always
+        // sized — otherwise an auto-height parent collapses to 0 once the
+        // child is absolutely positioned. `contain: layout paint` is safe
+        // here; `contain: strict` adds `size` containment which would make
+        // the container ignore its tall child entirely.
+        height: maxHeight,
+        contain: "layout paint",
+      }}
     >
       <div
         style={{

@@ -73,11 +73,18 @@ function StatusListView({ status }: { status: ListStatus }) {
 
   const cfg = CONFIGS[status];
   const tasks = useTaskStore((s) => s.tasks);
-  const taskStatus = useTaskStore((s) => s.status);
+  // Slice-level loading state — `task.status` is the *global* hint and goes
+  // "ready" after the very first slice loads. To know whether OUR slice is
+  // ready, check the per-slice set directly.
+  const sliceLoaded = useTaskStore((s) => s.loadedSlices.has(`status:${status}`));
+  // Surface the load error so a silent fetch failure is visible instead of
+  // leaving the view stuck in "Loading…" forever.
+  const storeError = useTaskStore((s) => (s.status === "error" ? s.error : null));
   const projects = useProjectStore((s) => s.projects);
   const toggleDone = useTaskStore((s) => s.toggleDone);
   const setTaskStatus = useTaskStore((s) => s.setStatus);
   const deleteTask = useTaskStore((s) => s.deleteTask);
+  const loadStatus = useTaskStore((s) => s.loadStatus);
   const setCaptureOpen = useCaptureModal((s) => s.setOpen);
 
   const projectsById = useMemo(
@@ -93,8 +100,8 @@ function StatusListView({ status }: { status: ListStatus }) {
     [tasks, status],
   );
 
-  const loading = taskStatus === "loading" && ownTasks.length === 0;
-  const empty = !loading && ownTasks.length === 0;
+  const loading = !sliceLoaded && ownTasks.length === 0;
+  const empty = sliceLoaded && ownTasks.length === 0;
 
   return (
     <BriefingShell>
@@ -109,6 +116,46 @@ function StatusListView({ status }: { status: ListStatus }) {
       />
 
       <div style={{ padding: "24px 40px 40px" }}>
+        {!sliceLoaded && storeError ? (
+          <div
+            style={{
+              padding: "14px 18px",
+              border: "1px solid var(--accent)",
+              borderRadius: 4,
+              fontFamily: "var(--ui)",
+              fontSize: 13,
+              color: "var(--ink)",
+              background: "color-mix(in oklch, var(--accent) 6%, var(--paper))",
+              marginBottom: 12,
+              display: "flex",
+              justifyContent: "space-between",
+              alignItems: "center",
+              gap: 12,
+            }}
+          >
+            <span>
+              <strong>Couldn't load {cfg.title.toLowerCase()}</strong> — {storeError}
+            </span>
+            <button
+              type="button"
+              onClick={() => void loadStatus(status)}
+              style={{
+                background: "var(--ink)",
+                color: "var(--paper)",
+                border: "none",
+                padding: "6px 10px",
+                borderRadius: 3,
+                cursor: "pointer",
+                fontFamily: "var(--mono)",
+                fontSize: 11,
+                letterSpacing: "0.06em",
+                textTransform: "uppercase",
+              }}
+            >
+              Retry
+            </button>
+          </div>
+        ) : null}
         {loading ? (
           <div
             style={{
