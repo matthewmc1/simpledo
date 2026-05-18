@@ -2,8 +2,8 @@
 
 > Living document. The current code is a static prototype of the Briefing Room
 > views with hard-coded fixtures. This plan turns it into a usable single-user
-> app: persistent state in Postgres, Google login, the core GTD capture loop,
-> and a real Gemma briefing.
+> app: persistent state in Postgres, Google login, the core capture →
+> inbox → today loop, and a real Gemma briefing.
 
 ## Decisions locked in
 
@@ -11,7 +11,7 @@
 | --- | --- |
 | **Persistence** | Local Postgres (Docker), schema-managed by Drizzle. Designed to be portable to hosted Postgres/Supabase later. |
 | **Auth** | Google OAuth via Better Auth. Sessions stored in Postgres. |
-| **v1 scope** | Capture → Inbox → Today (the core GTD loop). All other views keep their fixture data until v2. |
+| **v1 scope** | Capture → Inbox → Today (the core working loop). All other views keep their fixture data until v2. |
 | **Integrations** | Mocked for v1 (fixture data stays editable). No Linear/Jira/Gmail/Slack/Calendar wiring. |
 | **AI** | Real Gemma via local Ollama (`gemma2:2b`). Browser → `http://localhost:11434/api/generate` direct, with `OLLAMA_ORIGINS=http://localhost:5173` set when launching Ollama. |
 | **Client state** | Zustand for UI + optimistic mirrors of server state. No TanStack Query in v1; we call `fetch` from typed client helpers. |
@@ -70,7 +70,7 @@ All tables include `id uuid pk default gen_random_uuid()`, `created_at timestamp
 | Table | Purpose | Notable columns |
 | --- | --- | --- |
 | `user`, `session`, `account`, `verification` | Better Auth managed | (per Better Auth's Drizzle schema — we don't hand-write) |
-| `project` | GTD project label | `name text not null`, `color text`, `source text null` (linear/jira/…), `archived bool` |
+| `project` | Project label | `name text not null`, `color text`, `source text null` (linear/jira/…), `archived bool` |
 | `task` | A doable item | `title text not null`, `notes text`, `priority text check in ('P1','P2','P3','P4')`, `status text check in ('inbox','today','next','waiting','someday','done')`, `due timestamptz null`, `due_text text null` (e.g. "Today · 12:00" for display), `project_id uuid null`, `integration text null`, `integration_id text null`. **Ordering by `created_at` only — no `position` column in v1.** |
 | `subtask` | Nested under task | `task_id uuid not null`, `title text not null`, `done bool`. Ordered by `created_at`. |
 | `inbox_item` | Raw capture before processing | `text text not null`, `source text` (manual/slack/gmail/…), `from text null`, `captured_at timestamptz` |

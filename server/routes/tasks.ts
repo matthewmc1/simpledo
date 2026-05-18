@@ -103,14 +103,32 @@ router.get("/tasks", async (c) => {
 
 /** Postgres tsvector full-text search over title + notes + client_description.
  *  Index is `task_user_search_idx` (GIN on `search_tsv`). Returns a small
- *  result set ordered by rank — used by the ⌘P palette. */
+ *  result set ordered by rank — used by the ⌘P palette.
+ *
+ *  Supports **prefix matching** — typing "rol" finds "roll" — by translating
+ *  the user's input into a `to_tsquery` expression of the form
+ *  `word1:* & word2:*`. `plainto_tsquery` (the previous implementation) only
+ *  matched whole lexemes, so partial words returned nothing.
+ */
 router.get("/tasks/search", async (c) => {
   const user = requireUser(c);
   const q = (c.req.query("q") ?? "").trim();
   if (!q) return c.json({ tasks: [] });
-  // `plainto_tsquery` accepts user input verbatim (no special syntax required)
-  // and parameterises through Drizzle's `sql` template — no injection.
-  const tsq = sql`plainto_tsquery('english', ${q})`;
+
+  // Sanitise: split on whitespace, strip every tsquery operator (`& | ! ( ) : *
+  // <`), drop empties, append `:*` for prefix matching, AND them together.
+  // We build the query string here (no concatenation into SQL — it's passed
+  // as a bound parameter into `to_tsquery`), so user input can't construct
+  // arbitrary tsquery expressions or cause injection.
+  const queryString = q
+    .replace(/[&|!():*<>]/g, " ")
+    .split(/\s+/)
+    .filter(Boolean)
+    .map((word) => `${word}:*`)
+    .join(" & ");
+  if (!queryString) return c.json({ tasks: [] });
+
+  const tsq = sql`to_tsquery('english', ${queryString})`;
   const rows = await db
     .select({
       id: task.id,

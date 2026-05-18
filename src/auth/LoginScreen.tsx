@@ -120,7 +120,7 @@ export function LoginScreen() {
             margin: "0 0 28px",
           }}
         >
-          A GTD task manager with a quiet, local-first briefing.
+          A quiet, local-first task manager with a daily briefing.
         </p>
 
         <form onSubmit={onEmail} style={{ display: "flex", flexDirection: "column", gap: 8 }}>
